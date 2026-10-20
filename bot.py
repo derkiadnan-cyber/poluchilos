@@ -20,7 +20,7 @@ async def bot_stopped():
     cl.log("Bot", "critical", f"Bot has been stopped")
 
 async def bot_started():
-    cl.log("Bot", "warning", f"Bot has been started")
+    cl.log("Bot", "info", f"Bot has been started")
 
     # Меню команд в Telegram должно совпадать с тем, что реально умеет бот
     await bot.set_my_commands([
