@@ -1,20 +1,27 @@
-from dataclasses import dataclass
-from environs import Env
+import os
+
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
 
+# Локально подхватываем storage/.env, если он есть.
+# В облаке файла нет - тогда переменные берутся из окружения (Railway Variables).
+load_dotenv("storage/.env")
+
+
 def get_value_from_env(variable) -> str:
-    env = Env()
-    env.read_env("storage/.env")
-    return env(variable)
+    value = os.getenv(variable)
+    if not value:
+        raise RuntimeError(
+            f"Environment variable '{variable}' is not set. "
+            f"Add it in Railway -> Service -> Variables"
+        )
+    return value
+
 
 def get_value_from_env_or(variable, default: str = "") -> str:
-    env = Env()
-    env.read_env("storage/.env")
-    try:
-        return env(variable) or default
-    except Exception:
-        return default
+    return os.getenv(variable) or default
+
 
 bot_token = get_value_from_env("BOT_TOKEN")
 giphy_token = get_value_from_env_or("GIPHY_TOKEN")
