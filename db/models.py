@@ -3,12 +3,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
+from storage.config import get_value_from_env_or
+
 class Base(DeclarativeBase):
     pass
 
 class SqliteSession:
     def __init__(self):
-        self._engine = create_engine("sqlite:///db.db")
+        # Путь к базе берём из переменной окружения DB_PATH.
+        # В облаке (Railway Volume) укажи DB_PATH=/data/db.db, локально остаётся db.db
+        db_path = get_value_from_env_or("DB_PATH", "db.db")
+        self._engine = create_engine(f"sqlite:///{db_path}")
         self._session = sessionmaker(bind=self._engine)
         # self._session = Session()
     

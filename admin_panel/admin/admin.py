@@ -1,10 +1,9 @@
 import datetime
-import os
 from aiogram import types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
 
-from storage.config import dp, admins, systemdServiceName
+from storage.config import dp, admins
 from db import User
 
 from .markups import *
@@ -42,4 +41,4 @@ async def adminUserMenuCall(call: types.CallbackQuery, state: FSMContext):
 async def restartBotCall(call: types.CallbackQuery, state: FSMContext):
     await tryFinish(state)
     await call.message.answer("Перезапуск бота...")
-    os.system(f'sudo systemctl restart {systemdServiceName}')
+    await dp.stop_polling()
