@@ -6,7 +6,7 @@ from aiogram import types, F
 
 from handlers.markups import *
 import utils.custom_logger as cl
-from utils.scripts import get_refer_id
+from utils.scripts import get_refer_id, safe_edit, safe_answer
 from storage.config import dp, bot
 from storage.states import tryFinish, State
 from db import User
@@ -71,6 +71,25 @@ LOVE_STORY = [
 ]
 
 
+MENU_TEXT = '💋 Любимки в деле? 💋'
+
+HELP_TEXT = (
+    '📖 <b>Справка</b>\n\n'
+    '💋 <b>Профиль</b> — твоя карточка и реферальная ссылка\n'
+    '💕 <b>О нас</b> — история любви Даши и Аднана\n'
+    '📖 <b>Справка</b> — этот экран\n'
+    '⚙️ <b>Настройки</b> — управление ботом\n\n'
+    '🍌 Команды: <code>/start</code>, <code>/menu</code>, <code>/help</code>, <code>/settings</code>\n\n'
+    '💖 <i>Если что-то пошло не так — напиши любое сообщение, бот ответит</i>'
+)
+
+SETTINGS_TEXT = (
+    '⚙️ <b>Настройки</b>\n\n'
+    'Здесь скоро появятся: тишина ночи 🌙, выбор комплиментов 💋 и напоминания ⏰\n\n'
+    '💋 А пока можешь открыть свой профиль и забрать реферальную ссылку!'
+)
+
+
 @dp.message(CommandStart())
 async def startcmd(message: types.Message, command: CommandObject):
     async with ChatActionSender.typing(bot=bot, chat_id=message.from_user.id):
@@ -80,39 +99,62 @@ async def startcmd(message: types.Message, command: CommandObject):
         username = f"{message.from_user.username}"
         User.get_or_create(message.from_user.id, fullname=fullname, username=username,
                         inviter_id=referal_inviter_tg_id if referal_inviter_tg_id else 0)
-    await message.answer('💋 Любимки в деле? 💋', reply_markup=start_mkp())
+    await message.answer(MENU_TEXT, reply_markup=start_mkp())
+
+@dp.message(Command("menu"))
+async def menuCmd(message: types.Message):
+    await message.answer(MENU_TEXT, reply_markup=start_mkp())
+
+@dp.message(Command("help"))
+async def helpCmd(message: types.Message):
+    await message.answer(HELP_TEXT, reply_markup=help_mkp())
+
+@dp.message(Command("settings"))
+async def settingsCmd(message: types.Message):
+    await message.answer(SETTINGS_TEXT, reply_markup=settings_mkp())
 
 @dp.callback_query(F.data == "start")
 async def startCall(call: types.CallbackQuery, state: FSMContext):
     await tryFinish(state)
-    await call.message.edit_text('💋 Любимки в деле? 💋', reply_markup=start_mkp())
+    await safe_edit(call, MENU_TEXT, start_mkp())
+
+@dp.callback_query(F.data == "help")
+async def helpCall(call: types.CallbackQuery, state: FSMContext):
+    await tryFinish(state)
+    await safe_edit(call, HELP_TEXT, help_mkp())
+
+@dp.callback_query(F.data == "settings")
+async def settingsCall(call: types.CallbackQuery, state: FSMContext):
+    await tryFinish(state)
+    await safe_edit(call, SETTINGS_TEXT, settings_mkp())
 
 @dp.callback_query(F.data == "about")
 async def aboutCall(call: types.CallbackQuery, state: FSMContext):
     await tryFinish(state)
-    await call.message.edit_text(
-        LOVE_STORY[0][0],
-        reply_markup=story_mkp(0, len(LOVE_STORY))
-    )
+    await safe_edit(call, LOVE_STORY[0][0], story_mkp(0, len(LOVE_STORY)))
 
 @dp.callback_query(F.data.startswith("story_"))
 async def storyPageCall(call: types.CallbackQuery, state: FSMContext):
     await tryFinish(state)
-    page = int(call.data.split("_")[1])
-    await call.message.edit_text(
-        LOVE_STORY[page][0],
-        reply_markup=story_mkp(page, len(LOVE_STORY))
-    )
-    await call.answer()
+    try:
+        page = int(call.data.split("_")[1])
+    except (IndexError, ValueError):
+        await safe_answer(call, "Страница не найдена", True)
+        return
+    if not 0 <= page < len(LOVE_STORY):
+        await safe_answer(call, "Страница не найдена", True)
+        return
+    await safe_edit(call, LOVE_STORY[page][0], story_mkp(page, len(LOVE_STORY)))
 
 @dp.callback_query(F.data == "about_us")
 async def aboutUsCall(call: types.CallbackQuery, state: FSMContext):
     await tryFinish(state)
-    await call.message.edit_text(
+    await safe_edit(
+        call,
         '🍌 <b>Аднунка-Бананка</b> 💋\n'
         '🎵 <b>Дашулик-Припевулик</b> 💋\n\n'
         '💕 <i>Два сердечка, одна мелодия</i> 💕\n\n'
         '🌹 <i>«Ты — мой любимый банан, а я твой припев — вместе мы песня!»</i> 🌹\n\n'
         '💖 Обнимаю виртуально, целую нежно 💖',
-        reply_markup=to_menu_mpk()
+        to_menu_mpk()
     )

@@ -1,5 +1,7 @@
 import asyncio
 
+from aiogram.types import BotCommand
+
 from storage.config import dp, bot
 from managers.reminds import remindsManager
 import utils.custom_logger as cl
@@ -10,6 +12,7 @@ import admin_panel.mailing.mailing
 import handlers.start
 import handlers.profile
 import handlers.chat_join
+import handlers.fallbacks
 from db.models import dbSession
 
 
@@ -18,6 +21,14 @@ async def bot_stopped():
 
 async def bot_started():
     cl.log("Bot", "warning", f"Bot has been started")
+
+    # Меню команд в Telegram должно совпадать с тем, что реально умеет бот
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Запустить бота"),
+        BotCommand(command="menu", description="Главное меню"),
+        BotCommand(command="help", description="Помощь и справка"),
+        BotCommand(command="settings", description="Настройки"),
+    ])
 
 async def main():
     # Создание таблиц БД при старте

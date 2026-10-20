@@ -1,4 +1,5 @@
 import os
+import re
 
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, Router
@@ -31,7 +32,8 @@ router = Router()
 
 
 botUrl = "t.me/"                             # url бота, например t.me/somebot
-admins = [1191836733]                        # список ID админов (например - [123456, 7891011, 121314])
+# Список админов берём из ADMIN_IDS в .env / переменных окружения (формат: 123,456 или [123, 456])
+admins = [int(x) for x in re.findall(r"-?\d+", get_value_from_env_or("ADMIN_IDS", "1191836733"))]
 
 systemdServiceName = "some_bot"              # имя сервиса systemd для перезапуска через админ панель, например some_bot
 

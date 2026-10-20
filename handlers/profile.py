@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram import types, F
 
 from handlers.markups import *
+from utils.scripts import safe_edit, safe_answer
 from storage.config import dp, bot, admins
 from storage.states import tryFinish, State, ContactWithDevs
 from db import User
@@ -15,17 +16,18 @@ from db import User
 async def profileCall(call: types.CallbackQuery, state: FSMContext):
     await tryFinish(state)
     link = await create_start_link(bot, str(call.from_user.id))
-    await call.message.edit_text(
+    await safe_edit(
+        call,
         f'💋 Привет, {call.from_user.first_name}!\n\n'
         f'🌹 <i>«Ты — мой любимый банан, а я твой припев»</i> 🌹\n\n'
         f'💕 Твоя реферальная ссылка (делись с любимым человеком!):\n'
         f'<code>{link}</code>',
-        reply_markup=profile_mpk()
+        profile_mpk()
     )
 
 @dp.callback_query(F.data == "contact_with_devs")
 async def contactWithDevsCall(call: types.CallbackQuery, state: FSMContext):
-    await call.message.edit_text('Отправьте сообщение, фото, видео, стикер, все, что угодно - я передам его разработчикам', reply_markup=cancel_mpk())
+    await safe_edit(call, 'Отправьте сообщение, фото, видео, стикер, все, что угодно - я передам его разработчикам', cancel_mpk())
     await state.set_state(ContactWithDevs.Message)
 
 @dp.message(ContactWithDevs.Message)

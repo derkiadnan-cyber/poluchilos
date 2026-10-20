@@ -21,6 +21,12 @@ def start_mkp():
         [
             types.InlineKeyboardButton(text="💕 О нас", callback_data="about")
         ],
+        [
+            types.InlineKeyboardButton(text="📖 Справка", callback_data="help")
+        ],
+        [
+            types.InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")
+        ],
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=btns)
 
@@ -74,4 +80,18 @@ def story_mkp(page, total):
     btns.append([
         types.InlineKeyboardButton(text="💋 Вернуться в меню", callback_data="start")
     ])
+    return types.InlineKeyboardMarkup(inline_keyboard=btns)
+
+
+def help_mkp():
+    btns = [
+        [types.InlineKeyboardButton(text="💋 Вернуться в меню", callback_data="start")],
+    ]
+    return types.InlineKeyboardMarkup(inline_keyboard=btns)
+
+
+def settings_mkp():
+    btns = [
+        [types.InlineKeyboardButton(text="💋 Вернуться в меню", callback_data="start")],
+    ]
     return types.InlineKeyboardMarkup(inline_keyboard=btns)
