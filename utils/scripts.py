@@ -8,6 +8,20 @@ def get_refer_id(command_args):
         return None
 
 
+def get_command_name(message):
+    """
+    Возвращает имя команды (без "/" и без @mention) или None.
+    В aiogram 3 у Message нет поля .command, как было в 2.x, - команду
+    нужно доставать из entities сами.
+    """
+    if not message.text:
+        return None
+    for entity in message.entities or []:
+        if entity.type == "bot_command" and entity.offset == 0:
+            return message.text[1:entity.length].split("@")[0].lower()
+    return None
+
+
 async def safe_edit(call, text, reply_markup=None):
     """
     Редактирует сообщение под кнопкой и всегда гасит «часики» у пользователя.

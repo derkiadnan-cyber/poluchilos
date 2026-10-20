@@ -11,7 +11,7 @@ from aiogram import types
 
 from handlers.markups import start_mkp
 from handlers.start import MENU_TEXT
-from utils.scripts import safe_answer
+from utils.scripts import safe_answer, get_command_name
 from storage.config import dp
 
 
@@ -24,9 +24,10 @@ async def unknownCallback(call: types.CallbackQuery):
 @dp.message()
 async def unknownMessage(message: types.Message):
     # Команды, которых нет в боте, не должны молчать
-    if isinstance(message.command, str):
+    command = get_command_name(message)
+    if command:
         await message.answer(
-            f"🤔 Команду <code>/{message.command}</code> не знаю.\n"
+            f"🤔 Команду <code>/{command}</code> не знаю.\n"
             f"Вот что я умею 👇",
             reply_markup=start_mkp()
         )
