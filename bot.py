@@ -21,7 +21,7 @@ async def bot_started():
 
 async def main():
     # Создание таблиц БД при старте
-    await dbSession.create_all()
+    dbSession.create_all()
 
     # Фоновая задача для авто-рассылок
     asyncio.create_task(remindsManager())

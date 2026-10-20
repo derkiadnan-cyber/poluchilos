@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm import DeclarativeBase
@@ -13,6 +14,9 @@ class SqliteSession:
         # Путь к базе берём из переменной окружения DB_PATH.
         # В облаке (Railway Volume) укажи DB_PATH=/data/db.db, локально остаётся db.db
         db_path = get_value_from_env_or("DB_PATH", "db.db")
+        db_dir = os.path.dirname(db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         self._engine = create_engine(f"sqlite:///{db_path}")
         self._session = sessionmaker(bind=self._engine)
         # self._session = Session()
@@ -23,10 +27,8 @@ class SqliteSession:
     def __getattr__(self, name):
         return getattr(self._session, name)
     
-    async def create_all(self):
-        async with self._engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        await self._engine.dispose()
+    def create_all(self):
+        Base.metadata.create_all(self._engine)
 
 dbSession = SqliteSession()
 
