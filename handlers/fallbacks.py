@@ -9,8 +9,7 @@
 
 from aiogram import types
 
-from handlers.markups import start_mkp
-from handlers.start import MENU_TEXT
+from managers import content
 from utils.scripts import safe_answer, get_command_name
 from storage.config import dp
 
@@ -23,13 +22,19 @@ async def unknownCallback(call: types.CallbackQuery):
 
 @dp.message()
 async def unknownMessage(message: types.Message):
-    # Команды, которых нет в боте, не должны молчать
+    # Команды, которых нет в боте, не должны молчать.
+    # ВАЖНО: сюда приходим на ЛЮБОЕ сообщение без обработчика. Клавиатуру
+    # меню тут не показываем - иначе «Профиль/О нас/Справка/Настройки»
+    # будет всплывать на каждое слово пользователя. Меню отдаём только
+    # по /start, /menu и кнопке «Вернуться в меню».
     command = get_command_name(message)
     if command:
         await message.answer(
             f"🤔 Команду <code>/{command}</code> не знаю.\n"
-            f"Вот что я умею 👇",
-            reply_markup=start_mkp()
+            f"Напиши <code>/menu</code> - покажу меню 💋"
         )
         return
-    await message.answer(MENU_TEXT, reply_markup=start_mkp())
+    await message.answer(
+        f"{content.next_compliment()}\n\n"
+        f"💋 Меню откроется по команде <code>/menu</code>"
+    )
