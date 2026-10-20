@@ -179,5 +179,30 @@ class Payments(Base, ModelAdmin):
     )
 
 
+class BotState(Base, ModelAdmin):
+    """Минимальная таблица для хранения произвольных ключей (настройки, флаги)."""
+    __tablename__ = "bot_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(Text(), unique=True, nullable=False)
+    value: Mapped[str] = mapped_column(Text(), nullable=True)
+
+    @classmethod
+    def get_value(cls, key: str) -> str | None:
+        with dbSession() as session:
+            row = session.execute(select(cls).where(cls.key == key)).scalar_one_or_none()
+            return row.value if row else None
+
+    @classmethod
+    def set_value(cls, key: str, value: str) -> None:
+        with dbSession() as session:
+            row = session.execute(select(cls).where(cls.key == key)).scalar_one_or_none()
+            if row is None:
+                session.add(cls(key=key, value=value))
+            else:
+                row.value = value
+            session.commit()
+
+
 # engine = create_engine("sqlite:///db.db")
 # Base.metadata.create_all(engine)

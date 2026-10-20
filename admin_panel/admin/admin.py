@@ -18,6 +18,23 @@ def _pageNum(call, default=1) -> int:
         return default
 
 
+@dp.message(Command('testsend'))
+async def testSendCmd(message: types.Message):
+    """Прогоняет по одному сообщению каждого типа лично тебе, не дожидаясь интервалов."""
+    if message.from_user.id not in admins:
+        await message.answer("У тебя нет доступа к админ-панели")
+        return
+    from managers.reminds import send_test, is_quiet_now, get_targets
+    progress = await message.answer(
+        f"🔎 Прогоняю все типы рассылки по одному разу...\n"
+        f"Юзеров в базе: {len(get_targets())}\n"
+        f"Сейчас тихие часы: {'да' if is_quiet_now() else 'нет'}"
+    )
+    results = await send_test(message.from_user.id)
+    await progress.answer(
+        "📋 Результат проверки:\n" + "\n".join(f"  • {r}" for r in results)
+    )
+
 @dp.message(Command('admin'))
 async def adminCmd(message: types.Message, state: FSMContext):
     if message.from_user.id in admins:
