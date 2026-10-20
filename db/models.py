@@ -4,16 +4,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
-from storage.config import get_value_from_env_or
+from storage.config import db_path
 
 class Base(DeclarativeBase):
     pass
 
 class SqliteSession:
     def __init__(self):
-        # Путь к базе берём из переменной окружения DB_PATH.
-        # В облаке (Railway Volume) укажи DB_PATH=/data/db.db, локально остаётся db.db
-        db_path = get_value_from_env_or("DB_PATH", "db.db")
+        # Путь берём из storage.config: там он уже подобран с учётом
+        # Railway volume (RAILWAY_VOLUME_MOUNT_PATH) или переменной DB_PATH.
         db_dir = os.path.dirname(db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)

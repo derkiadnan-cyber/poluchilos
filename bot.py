@@ -2,7 +2,10 @@ import asyncio
 
 from aiogram.types import BotCommand
 
-from storage.config import dp, bot
+from storage.config import (
+    dp, bot, db_path, DB_ON_VOLUME, IS_CLOUD, AUTOSEND,
+    giphy_token, unsplash_key,
+)
 from managers.reminds import remindsManager
 import utils.custom_logger as cl
 
@@ -20,7 +23,28 @@ async def bot_stopped():
     cl.log("Bot", "critical", f"Bot has been stopped")
 
 async def bot_started():
-    cl.log("Bot", "info", f"Bot has been started")
+    cl.log("Bot", "info", f"Bot has been started | окружение: "
+                          f"{'облако (Railway)' if IS_CLOUD else 'локально'}")
+
+    # База на volume переживёт перезадеплой, база в контейнере - нет
+    if DB_ON_VOLUME:
+        cl.log("Bot", "info", f"База на volume: {db_path}")
+    elif IS_CLOUD:
+        cl.log("Bot", "warning",
+               f"База {db_path} внутри контейнера - при следующем деплое юзеры сотрутся! "
+               f"Прикрепи volume к сервису (путь /data), переменные не нужны - "
+               f"путь подхватится сам")
+    else:
+        cl.log("Bot", "info", f"База: {db_path}")
+
+    # Статус рассылок и источников медиа - чтобы не гадать, почему молчит
+    if AUTOSEND:
+        cl.log("Bot", "info",
+               "Рассылки: вкл | "
+               f"гифки: {'Giphy поиск' if giphy_token else 'встроенный банк (ключ не нужен)'} | "
+               f"фото: {'Unsplash по теме' if unsplash_key else 'picsum (без ключа, не по теме)'}")
+    else:
+        cl.log("Bot", "info", "Рассылки: ВЫКЛ (AUTOSEND=off)")
 
     # Меню команд в Telegram должно совпадать с тем, что реально умеет бот
     await bot.set_my_commands([

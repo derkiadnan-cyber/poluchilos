@@ -24,15 +24,24 @@ async def testSendCmd(message: types.Message):
     if message.from_user.id not in admins:
         await message.answer("У тебя нет доступа к админ-панели")
         return
+    from storage.config import db_path, DB_ON_VOLUME, IS_CLOUD, AUTOSEND, giphy_token, unsplash_key
     from managers.reminds import send_test, is_quiet_now, get_targets
-    progress = await message.answer(
-        f"🔎 Прогоняю все типы рассылки по одному разу...\n"
-        f"Юзеров в базе: {len(get_targets())}\n"
-        f"Сейчас тихие часы: {'да' if is_quiet_now() else 'нет'}"
+
+    db_line = db_path if DB_ON_VOLUME else f"{db_path} ⚠️ сотрётся при деплое"
+    await message.answer(
+        "🔎 Статус:\n"
+        f"  • окружение: {'облако' if IS_CLOUD else 'локально'}\n"
+        f"  • рассылки: {'вкл' if AUTOSEND else 'ВЫКЛ (AUTOSEND=off)'}\n"
+        f"  • получателей: {len(get_targets())}\n"
+        f"  • тихие часы сейчас: {'да' if is_quiet_now() else 'нет'}\n"
+        f"  • база: {db_line}\n"
+        f"  • гифки: {'Giphy поиск по запросу' if giphy_token else 'встроенный банк (ключ не нужен)'}\n"
+        f"  • фото: {'Unsplash по теме' if unsplash_key else 'picsum (без ключа, не по теме)'}\n\n"
+        f"Прогоняю по одному сообщению каждого типа..."
     )
     results = await send_test(message.from_user.id)
-    await progress.answer(
-        "📋 Результат проверки:\n" + "\n".join(f"  • {r}" for r in results)
+    await message.answer(
+        "📋 Результат:\n" + "\n".join(f"  • {r}" for r in results)
     )
 
 @dp.message(Command('admin'))

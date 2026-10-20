@@ -32,6 +32,18 @@ dp = Dispatcher()
 router = Router()
 
 
+# ===== БАЗА ДАННЫХ =====
+# Railway сам отдаёт путь примонтированного volume, если он прикреплён.
+# Используем его автоматически: база ляжет на диск, который НЕ стирается
+# при перезадеплое. Своя переменная DB_PATH всё ещё важнее.
+_volume_mount = get_value_from_env_or("RAILWAY_VOLUME_MOUNT_PATH")
+db_path = get_value_from_env_or(
+    "DB_PATH",
+    f"{_volume_mount.rstrip('/')}/db.db" if _volume_mount else "db.db",
+)
+# Volume не прикреплён - база будет жить в контейнере и сотрётся при следующем деплое
+DB_ON_VOLUME = bool(_volume_mount) and db_path.startswith(_volume_mount.rstrip("/"))
+
 botUrl = "t.me/"                             # url бота, например t.me/somebot
 # Список админов берём из ADMIN_IDS в .env / переменных окружения (формат: 123,456 или [123, 456])
 admins = [int(x) for x in re.findall(r"-?\d+", get_value_from_env_or("ADMIN_IDS", "1191836733"))]
@@ -67,9 +79,15 @@ def _hhmm(variable, default: str) -> tuple:
 
 
 # ===== АВТО-РАССЫЛКИ =====
-# Главный выключатель. В облаке (Railway) добавь переменную окружения AUTOSEND=on,
-# локально рассылки молчат, чтобы не спамить тестовых юзеров.
-AUTOSEND = _flag("AUTOSEND", "off")
+# Railway сам подставляет служебные переменные - по ним понимаем, где запущен бот.
+# Локально их нет, в облаке они есть всегда.
+IS_CLOUD = bool(get_value_from_env_or("RAILWAY_PROJECT_ID")
+                or get_value_from_env_or("RAILWAY_SERVICE_ID"))
+
+# Главный выключатель рассылок.
+# В облаке включён по умолчанию, локально - выключен, чтобы тесты не спамили юзерам.
+# Явная переменная окружения всегда важнее автоопределения (AUTOSEND=off выключит и в облаке).
+AUTOSEND = _flag("AUTOSEND", "on" if IS_CLOUD else "off")
 
 # Часовой пояс для утренних и ночных рассылок (Railway живёт в UTC, поэтому важно)
 TIMEZONE = get_value_from_env_or("TIMEZONE", "Europe/Moscow")

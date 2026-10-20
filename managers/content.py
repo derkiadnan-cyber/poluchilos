@@ -251,6 +251,43 @@ GIPHY_GIF_QUERIES = [
     "hugging couple love", "warm hug love", "bear hug cute",
 ]
 
+# Проверенный банк гифок с обнимашками. Используется, когда GIPHY_TOKEN не задан,
+# чтобы рассылка гифок работала вообще без ключей и регистрации.
+# Каждая ссылка взята со страниц giphy.com/search/{hug,cuddle,bear-hug},
+# отдаёт image/gif и принята Telegram через send_animation (проверено на 28 из 28).
+# Канонический формат media.giphy.com/media/<ID>/giphy.gif не имеет срока действия,
+# в отличие от URL с токеном из поисковой выдачи.
+HUG_GIFS = [
+    "https://media.giphy.com/media/7Wcyq7KvKFNTO/giphy.gif",
+    "https://media.giphy.com/media/42YlR8u9gV5Cw/giphy.gif",
+    "https://media.giphy.com/media/2GDHOfqcmYIX6/giphy.gif",
+    "https://media.giphy.com/media/EvYHHSntaIl5m/giphy.gif",
+    "https://media.giphy.com/media/bvFS4rALdNDag/giphy.gif",
+    "https://media.giphy.com/media/ABjJcFelbuanC/giphy.gif",
+    "https://media.giphy.com/media/diAhf8bYer76E/giphy.gif",
+    "https://media.giphy.com/media/vVGzlimI9KAOQ/giphy.gif",
+    "https://media.giphy.com/media/llmZp6fCVb4ju/giphy.gif",
+    "https://media.giphy.com/media/IwBXyDeiFKcsE/giphy.gif",
+    "https://media.giphy.com/media/ZSzuLOQHkgycM/giphy.gif",
+    "https://media.giphy.com/media/mx2EIGDZX5XH2/giphy.gif",
+    "https://media.giphy.com/media/LVXJQat47MwQU/giphy.gif",
+    "https://media.giphy.com/media/mbQUPTaciTyiQ/giphy.gif",
+    "https://media.giphy.com/media/Shkbr6iDNznoY/giphy.gif",
+    "https://media.giphy.com/media/8EiFeyJlAv1cI/giphy.gif",
+    "https://media.giphy.com/media/wkFhYUk45dFsI/giphy.gif",
+    "https://media.giphy.com/media/DzFk3oztFn83K/giphy.gif",
+    "https://media.giphy.com/media/Y8Bi9lCOzXRkY/giphy.gif",
+    "https://media.giphy.com/media/f3cwDsLAKkEAE/giphy.gif",
+    "https://media.giphy.com/media/WGdKO8PssACTS/giphy.gif",
+    "https://media.giphy.com/media/IpXg8GcqXlQXu/giphy.gif",
+    "https://media.giphy.com/media/ZhXaeQIkcKcFi/giphy.gif",
+    "https://media.giphy.com/media/B860qFQP5fLCo/giphy.gif",
+    "https://media.giphy.com/media/LgC8ZxIYzCuas/giphy.gif",
+    "https://media.giphy.com/media/JglVCaB0axZ4Y/giphy.gif",
+    "https://media.giphy.com/media/69aF2EFrB9xiU/giphy.gif",
+    "https://media.giphy.com/media/DVZXnepcu5Pbi/giphy.gif",
+]
+
 # Фото: ищем по романтическим тегам.
 # Источник подключается цепочкой в reminds.next_photo_url(): сначала Unsplash API
 # (если задан UNSPLASH_ACCESS_KEY - тогда фото именно по теме), иначе Picsum
@@ -300,6 +337,7 @@ _night = Deck(NIGHT)
 _morning = Deck(MORNING)
 _next_day = Deck(NEXT_DAY_WISHES)
 _gif_query = Deck(GIPHY_GIF_QUERIES)
+_hug_gif = Deck(HUG_GIFS)
 _photo_tag = Deck(PHOTO_TAGS)
 
 # ===== ФУНКЦИИ ДОСТУПА К МЕДИА =====
@@ -331,6 +369,11 @@ def next_morning() -> str:
 
 def next_gif_query() -> str:
     return _gif_query.next()
+
+
+def next_hug_gif() -> str:
+    """Гифка с обнимашками из проверенного банка (без ключа Giphy)."""
+    return _hug_gif.next()
 
 
 def next_photo_tag() -> str:

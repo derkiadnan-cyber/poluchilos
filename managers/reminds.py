@@ -195,24 +195,27 @@ async def next_photo_url() -> str | None:
 
 
 async def get_gif_url() -> str | None:
-    """Ссылка на случайную гифку с обнимашками, либо None."""
-    if not giphy_token:
-        return None
-    query = content.next_gif_query()
-    try:
-        data = await _fetch_json(GIPHY_API_URL, params={
-            "api_key": giphy_token,
-            "q": query,
-            "limit": 25,
-            "rating": "pg-13",
-            "lang": "en",
-        })
-        results = data.get("data") or []
-        if results:
-            return random.choice(results)["images"]["original"]["gif_url"]
-    except Exception:
-        cl.log("Reminds", "error", traceback.format_exc())
-    return None
+    """
+    Ссылка на случайную гифку с обнимашками.
+    С GIPHY_TOKEN - свежий поиск по запросу, без токена - из проверенного банка.
+    """
+    if giphy_token:
+        query = content.next_gif_query()
+        try:
+            data = await _fetch_json(GIPHY_API_URL, params={
+                "api_key": giphy_token,
+                "q": query,
+                "limit": 25,
+                "rating": "pg-13",
+                "lang": "en",
+            })
+            results = data.get("data") or []
+            if results:
+                return random.choice(results)["images"]["original"]["gif_url"]
+            cl.log("Reminds", "info", "Giphy ничего не нашёл, беру гифку из банка")
+        except Exception:
+            cl.log("Reminds", "error", traceback.format_exc())
+    return content.next_hug_gif()
 
 
 async def send_poems() -> None:
@@ -238,13 +241,16 @@ async def send_photos() -> None:
 
 
 async def send_gifs() -> None:
-    """Гифки с обнимашками. Без Giphy-токена не молчим - шлём текст."""
+    """Гифки с обнимашками. Подпись - признание, чтобы гифка не уходила голой."""
     gif_url = await get_gif_url()
     caption = content.next_confession()
     if gif_url:
-        await _broadcast("Гифки", animation=gif_url, text=caption)
-    else:
-        await _broadcast("Гифки (без гифки)", text=caption)
+        sent, _ = await _broadcast("Гифки", animation=gif_url, text=caption, probe_first=True)
+        if sent:
+            return
+        # Гифку не приняли (например, ссылка протухла) - шлём хотя бы текст
+        cl.log("Reminds", "error", "Гифку отправить не удалось, отправляю текст")
+    await _broadcast("Гифки (замена)", text=caption)
 
 
 async def _run_once_per_day(name: str, label: str, text: str) -> None:
@@ -283,9 +289,10 @@ async def send_test(chat_id) -> list:
     gif_url = await get_gif_url()
     if gif_url:
         ok = await _send_one(chat_id, animation=gif_url, text=content.next_confession())
-        results.append(f"гифки: {'ок' if ok else 'ошибка'}")
+        src = "Giphy поиск" if giphy_token else "банк без ключа"
+        results.append(f"гифки ({src}): {'ок' if ok else 'ошибка'}")
     else:
-        results.append("гифки: пропуск (нет GIPHY_TOKEN)")
+        results.append("гифки: пропуск (нет ни токена, ни гифок в банке)")
 
     photo_url = await next_photo_url()
     if photo_url:
