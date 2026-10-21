@@ -288,16 +288,43 @@ HUG_GIFS = [
     "https://media.giphy.com/media/DVZXnepcu5Pbi/giphy.gif",
 ]
 
-# Фото: ищем по романтическим тегам.
-# Источник подключается цепочкой в reminds.next_photo_url(): сначала Unsplash API
-# (если задан UNSPLASH_ACCESS_KEY - тогда фото именно по теме), иначе Picsum
-# (качественные фото без ключа, но без подбора по теме).
-# LoremFlickr и Wikimedia не подходят: Telegram не умеет их скачивать.
+# Фото: романтические теги для Unsplash API.
+# Источник подключается цепочкой в reminds.next_photo_url(): сначала Unsplash
+# (если задан UNSPLASH_ACCESS_KEY - тогда фото именно по теме), затем встроенный
+# банк ROMANTIC_PHOTOS, затем Picsum.
 PHOTO_TAGS = [
     "romantic flowers", "red roses bouquet", "couple holding hands",
     "candle light romance", "love letters", "sunset couple",
     "peonies bouquet", "wedding rings flowers", "two coffee cups",
     "heart shaped balloons",
+]
+
+
+# Встроенный банк романтических фото - работает вообще без ключей и регистрации.
+# Тематика подтверждена именем файла (розы, пионы, тюльпаны, лаванда), каждая
+# ссылка отправлена в Telegram через send_photo и принята (17 из 17, 21.10.2026).
+# Хосты только те, которые Telegram стабильно скачивает: live.staticflickr.com
+# (большая версия _b.jpg) и upload.wikimedia.org.
+# Цепочка выбора в reminds.next_photo_url(): Unsplash (если есть ключ) -> этот
+# банк -> picsum (если вдруг весь банк недоступен).
+ROMANTIC_PHOTOS = [
+    "https://live.staticflickr.com/8741/16741821406_ce8db59ba6_b.jpg",   # букет красных роз
+    "https://live.staticflickr.com/2663/4061664476_317f2f70ea_b.jpg",    # букет красных роз
+    "https://live.staticflickr.com/8658/16581687380_614f7a5bb8_b.jpg",   # дюжина красных роз
+    "https://live.staticflickr.com/143/341955639_8ae0fbda12_b.jpg",      # красные розы
+    "https://live.staticflickr.com/3372/3278528540_ba4e43b8e9_b.jpg",    # красная роза
+    "https://live.staticflickr.com/5291/5402157745_a384f0583d_b.jpg",    # букет роз
+    "https://live.staticflickr.com/5636/21486667142_51da17b481_b.jpg",   # розы в коробке
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/Red_rose_with_black_background.jpg/1280px-Red_rose_with_black_background.jpg",   # роза на тёмном фоне
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/34/RED_ROSES_AND_BABY%27S_BREATH.jpg/1280px-RED_ROSES_AND_BABY%27S_BREATH.jpg",   # розы с гипсофилой
+    "https://upload.wikimedia.org/wikipedia/commons/7/71/Mary_Hiester_Reid_-_Roses_in_a_Vase%2C_1891.jpg",   # розы в вазе (Рид, 1891)
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/Comestible_rose_in_the_Laquenexy_orchard_garden%2C_Moselle%2C_France_%2801%29.jpg/1280px-Comestible_rose_in_the_Laquenexy_orchard_garden%2C_Moselle%2C_France_%2801%29.jpg",   # роза в саду
+    "https://upload.wikimedia.org/wikipedia/commons/7/75/Lavender_field.jpg",   # лавандовое поле
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/34/Awesome_tulip_%2844674196735%29.jpg/1280px-Awesome_tulip_%2844674196735%29.jpg",   # тюльпан
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/Beautiful_yellow_tulips.jpg/1280px-Beautiful_yellow_tulips.jpg",   # жёлтые тюльпаны
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/60/%22Helmar%22_Triumph_tulip.jpg/1280px-%22Helmar%22_Triumph_tulip.jpg",   # тюльпан Triumph
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Shanlinxi_Peony_Garden-08.2024-03-13.jpg/1280px-Shanlinxi_Peony_Garden-08.2024-03-13.jpg",   # пионы в саду
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Shanlinxi_Peony_Garden-01.2024-03-13.jpg/1280px-Shanlinxi_Peony_Garden-01.2024-03-13.jpg",   # пионы в саду
 ]
 
 
@@ -356,6 +383,7 @@ _next_day = Deck(NEXT_DAY_WISHES)
 _gif_query = Deck(GIPHY_GIF_QUERIES)
 _hug_gif = Deck(HUG_GIFS)
 _photo_tag = Deck(PHOTO_TAGS)
+_romantic_photo = Deck(ROMANTIC_PHOTOS)
 _compliment = Deck(COMPLIMENTS)
 
 # ===== ФУНКЦИИ ДОСТУПА К МЕДИА =====
@@ -397,6 +425,11 @@ def next_hug_gif() -> str:
 def next_photo_tag() -> str:
     """Возвращает следующий тег для поиска фото."""
     return _photo_tag.next()
+
+
+def next_romantic_photo() -> str:
+    """Фото из встроенного банка (розы/пионы/тюльпаны/лаванда), без ключей."""
+    return _romantic_photo.next()
 
 
 def next_compliment() -> str:

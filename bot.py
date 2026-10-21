@@ -7,6 +7,7 @@ from storage.config import (
     giphy_token, unsplash_key,
 )
 from managers.reminds import remindsManager
+from managers import content
 import utils.custom_logger as cl
 
 import admin_panel.admin.admin
@@ -42,7 +43,7 @@ async def bot_started():
         cl.log("Bot", "info",
                "Рассылки: вкл | "
                f"гифки: {'Giphy поиск' if giphy_token else 'встроенный банк (ключ не нужен)'} | "
-               f"фото: {'Unsplash по теме' if unsplash_key else 'picsum (без ключа, не по теме)'}")
+               f"фото: {'Unsplash по теме' if unsplash_key else f'встроенный банк из {len(content.ROMANTIC_PHOTOS)} фото (ключ не нужен)'}")
     else:
         cl.log("Bot", "info", "Рассылки: ВЫКЛ (AUTOSEND=off)")
 

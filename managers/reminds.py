@@ -184,14 +184,23 @@ def _photo_from_picsum() -> str:
     return f"https://picsum.photos/seed/{random.randint(1, 999999)}/1000/700"
 
 
-async def next_photo_url() -> str | None:
+async def next_photo_url() -> tuple:
     """
-    Ссылка на фото для рассылки.
+    Ссылка на фото для рассылки и имя источника: (url, source).
+    Цепочка: Unsplash (только если задан ключ, зато строго по романтическому тегу)
+    -> встроенный банк ROMANTIC_PHOTOS (тема подтверждена именем файла, ключ не нужен)
+    -> picsum (последний запасной вариант).
     Специально НЕ проверяем доступность с нашего сервера: проверено, что Telegram
     скачивает ссылки, которые нам блокируют (picsum отвечает 403 нам, но Telegram
     их принимает). Нерабочую ссылку перехватит probe_first при первой отправке.
     """
-    return await _photo_from_unsplash() or _photo_from_picsum()
+    url = await _photo_from_unsplash()
+    if url:
+        return url, "Unsplash по теме"
+    try:
+        return content.next_romantic_photo(), "банк фото"
+    except ValueError:
+        return _photo_from_picsum(), "picsum"
 
 
 async def get_gif_url() -> str | None:
@@ -230,9 +239,10 @@ async def send_confessions() -> None:
 
 async def send_photos() -> None:
     """Романтические фото. Подписью служит стишок, чтобы фото не уходило голым."""
-    url = await next_photo_url()
+    url, source = await next_photo_url()
     if url:
-        sent, _ = await _broadcast("Фото", photo=url, text=content.next_poem(), probe_first=True)
+        sent, _ = await _broadcast(f"Фото ({source})", photo=url,
+                                   text=content.next_poem(), probe_first=True)
         if sent:
             return
     # Медиа не дошло - лучше отправим текст, чем промолчим
@@ -294,10 +304,10 @@ async def send_test(chat_id) -> list:
     else:
         results.append("гифки: пропуск (нет ни токена, ни гифок в банке)")
 
-    photo_url = await next_photo_url()
+    photo_url, photo_source = await next_photo_url()
     if photo_url:
         ok = await _send_one(chat_id, photo=photo_url, text=content.next_poem())
-        results.append(f"фото: {'ок' if ok else 'ошибка'}")
+        results.append(f"фото ({photo_source}): {'ок' if ok else 'ошибка'}")
     else:
         results.append("фото: пропуск (все источники недоступны)")
 
