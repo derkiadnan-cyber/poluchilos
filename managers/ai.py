@@ -1,17 +1,21 @@
 """
-Ответы на обычные сообщения пользователя через DeepSeek API.
+Ответы на обычные сообщения пользователя. Каскад из трёх каналов.
 
-DeepSeek отдаёт OpenAI-совместимый эндпоинт (https://api.deepseek.com/chat/completions),
-поэтому никакие SDK не нужны - хватает aiohttp, который уже в зависимостях.
+    1. DeepSeek      - если задан DEEPSEEK_API_KEY (платно, но быстро и без лимитов)
+    2. Pollinations  - бесплатно и БЕЗ КЛЮЧА вообще, OpenAI-совместимый API.
+                       У бесплатного тарифа лимит 1 ответ в 30 секунд на IP,
+                       поэтому стучимся не чаще - иначе получаем HTTP 402.
+    3. Свой мозг     - managers/brain.py: считает, знает дату, отвечает про бота.
+                       Работает всегда: без ключей, без сети, без лимитов.
 
-Ключ DEEPSEEK_API_KEY берётся из окружения (локально storage/.env, в облаке
-Railway -> Variables). Ключей в репозитории нет и быть не должно.
+Бот не должен молчать ни при каких условиях: если все каналы не смогли,
+caller (handlers/fallbacks.py) отвечает комплиментом.
 
-Бот не должен молчать ни при каких условиях, поэтому у каждого сбоя есть
-подстраховка: нет ключа / нет сети / модель вернула мусор - caller получает None
-и отвечает комплиментом (см. handlers/fallbacks.py).
+Ключи берутся из окружения (локально storage/.env, в облаке Railway Variables).
+В репозитории ключей нет и быть не должно.
 """
 
+import asyncio
 import html as html_lib
 import re
 import time
@@ -20,24 +24,34 @@ from collections import defaultdict, deque
 
 import aiohttp
 
+from managers import brain
 from managers.content import AI_SYSTEM_PROMPT
-from storage.config import AI_ENABLED, AI_MAX_TOKENS, AI_TIMEOUT, deepseek_key, deepseek_model
+from storage.config import (
+    AI_ENABLED, AI_MAX_TOKENS, AI_TIMEOUT,
+    deepseek_key, deepseek_model, pollinations_model,
+)
 import utils.custom_logger as cl
 
-# OpenAI-совместимый адрес DeepSeek. Меняется только в тестах.
-API_URL = "https://api.deepseek.com/chat/completions"
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+POLLINATIONS_URL = "https://text.pollinations.ai/openai"
 
 HISTORY_SIZE = 10          # реплик на один чат (user + assistant), ~5 вопросов
 MAX_INPUT_CHARS = 2000     # длинные сообщения режем: лишние токены нам не нужны
 MAX_ANSWER_CHARS = 3500    # лимит Telegram 4096, берём с запасом
-MIN_GAP_SECONDS = 1.5      # антифлуд: не чаще одного запроса в секунду на чат
+MIN_GAP_SECONDS = 1.0      # антифлуд: не чаще одного ответа в секунду на чат
+POLL_FREE_GAP = 31         # бесплатный Pollinations отдаёт 1 ответ в 30 секунд на IP
 MAX_CHATS_IN_MEMORY = 500  # чтобы память контейнера не росла бесконечно
+
+# Ошибки, которые означают «сеть не ответила»: это не баг, а погода,
+# поэтому воркер не зовём, пишем одной строкой.
+NETWORK_ERRORS = (aiohttp.ClientError, asyncio.TimeoutError)
 
 TEXT_BUSY = "Уже думаю над твоим прошлым сообщением 💋 Секунду, я рядом"
 
-# История диалога, чтобы бот помел контекст переписки.
-# Хранится в памяти процесса: после рестарта контейнера начинается с чистого листа,
-# на рассылки и меню это не влияет.
+last_source = "—"          # какой канал ответил последним - видно в /status у админа
+_poll_ok_at = 0.0          # когда в последний раз успешно ответил Pollinations
+_poll_blocked_until = 0.0  # до какого момента не пробуем (ловили лимит или отказ)
+
 _history = defaultdict(lambda: deque(maxlen=HISTORY_SIZE))
 _busy = set()
 _last_call = {}
@@ -107,9 +121,13 @@ def to_telegram_html(model_text: str) -> str:
         else:
             parts.append(_inline_to_html(segment))
     text = "".join(parts).strip()
+    # Модель могла выдать пустой блок кода (только ```) - такая карточка
+    # улетела бы в Telegram пустой, вырезаем её.
+    text = re.sub(r"<pre>\s*</pre>", "", text).strip()
     return _safe_truncate(_BLANK.sub("\n\n", text))
 
 
+# ===== ХРАНЕНИЕ ДИАЛОГА =====
 def _remember(chat_id, role: str, text: str) -> None:
     if len(_history) > MAX_CHATS_IN_MEMORY:
         _history.clear()
@@ -118,71 +136,170 @@ def _remember(chat_id, role: str, text: str) -> None:
     _history[chat_id].append({"role": role, "content": text})
 
 
+def _forget_last_question(chat_id) -> None:
+    """Каналы не ответили - не тянем этот вопрос в следующий запрос."""
+    try:
+        _history[chat_id].pop()
+    except (IndexError, KeyError):
+        pass
+
+
 def _system_prompt(user_name: str | None) -> str:
     if user_name:
         return f"{AI_SYSTEM_PROMPT}\n\nТак пользователя зовут: {user_name}."
     return AI_SYSTEM_PROMPT
 
 
-async def _ask_api(messages: list) -> str | None:
-    """Один запрос к DeepSeek. Возвращает текст ответа или None при любой проблеме."""
-    payload = {
+# ===== КАНАЛЫ =====
+async def _post(url: str, payload: dict, headers: dict = None) -> str | None:
+    """
+    Один POST в OpenAI-совместимый API.
+    Возвращает текст ответа модели либо None при любой проблеме.
+    """
+    host = url.split("/")[2]
+    try:
+        timeout = aiohttp.ClientTimeout(total=AI_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload, headers=headers or {}) as resp:
+                if resp.status != 200:
+                    body = (await resp.text())[:200].replace("\n", " ")
+                    cl.log("LLM", "warning", f"{host} HTTP {resp.status}: {body}")
+                    return None
+                data = await resp.json()
+        return ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+    except NETWORK_ERRORS as exc:
+        cl.log("LLM", "warning", f"{host}: сеть не ответила ({type(exc).__name__})")
+        return None
+    except Exception:
+        cl.log("LLM", "error", traceback.format_exc())
+        return None
+
+
+async def _ask_deepseek(messages: list) -> str | None:
+    """Первый канал: платный DeepSeek. Работает только с ключом."""
+    if not (AI_ENABLED and deepseek_key):
+        return None
+    return await _post(DEEPSEEK_URL, {
         "model": deepseek_model,
         "messages": messages,
         "max_tokens": AI_MAX_TOKENS,
         "temperature": 0.8,
         "stream": False,
-    }
-    headers = {"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"}
+    }, {"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"})
+
+
+async def _ask_pollinations(messages: list) -> str | None:
+    """Второй канал: бесплатно и без ключа. Бережём лимит 1 запрос / 30 секунд."""
+    global _poll_ok_at, _poll_blocked_until
+    now = time.monotonic()
+    if now < _poll_blocked_until:
+        return None
+    if _poll_ok_at and now - _poll_ok_at < POLL_FREE_GAP:
+        return None
     try:
-        timeout = aiohttp.ClientTimeout(total=AI_TIMEOUT)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(API_URL, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    body = (await resp.text())[:300]
-                    cl.log("DeepSeek", "error", f"HTTP {resp.status}: {body}")
-                    return None
-                data = await resp.json()
-        return ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+        reply = await _post(POLLINATIONS_URL, {
+            "model": pollinations_model,
+            "messages": messages,
+            "max_tokens": min(AI_MAX_TOKENS, 800),
+            "temperature": 0.8,
+            "stream": False,
+        }, {"Content-Type": "application/json"})
     except Exception:
-        cl.log("DeepSeek", "error", traceback.format_exc())
+        reply = None
+    if reply:
+        _poll_ok_at = now
+    else:
+        # Раз не получилось - не долбимся, иначе получим бан по IP
+        _poll_blocked_until = now + POLL_FREE_GAP
+    return reply
+
+
+def _ask_brain(question: str, user_name: str | None, hard_only: bool = False) -> str | None:
+    """
+    Третий канал: собственный движок. Мгновенно, без сети и лимитов.
+    Исключения гасим здесь - это последняя линия обороны, она не имеет права
+    ронять обработчик сообщения.
+    """
+    try:
+        return brain.answer(question, user_name=user_name, hard_only=hard_only)
+    except Exception:
+        cl.log("Brain", "error", traceback.format_exc()[-300:])
         return None
 
 
+def channels_status() -> str:
+    """Человеческая строка про каналы - для /status в админ-панели."""
+    deep = f"DeepSeek вкл ({deepseek_model})" if (AI_ENABLED and deepseek_key) else "DeepSeek: нет ключа"
+    cooling = time.monotonic() < _poll_blocked_until or (
+        _poll_ok_at and time.monotonic() - _poll_ok_at < POLL_FREE_GAP)
+    poll = "на паузе до лимита" if cooling else "готов"
+    return f"{deep} | Pollinations без ключа: {poll} | свой мозг: готов | последний: {last_source}"
+
+
+# ===== ГЛАВНАЯ ТОЧКА ВХОДА =====
 async def answer(chat_id, text: str, user_name: str = None) -> str | None:
     """
     Возвращает готовый к отправке текст ответа на сообщение пользователя,
     либо None - тогда caller обязан ответить чем-то своим (комплиментом).
     """
+    global last_source
     text = (text or "").strip()
     if not text:
         return None
-    if not AI_ENABLED or not deepseek_key:
-        return None
 
+    question = text[:MAX_INPUT_CHARS]
     now = time.monotonic()
+
+    # Пока внешний канал занят нашим же прошлым запросом, отвечаем своими
+    # силами: это мгновенно и не создаёт очередь из сетевых обращений.
     if chat_id in _busy or now - _last_call.get(chat_id, 0) < MIN_GAP_SECONDS:
+        local = _ask_brain(question, user_name)
+        if local:
+            last_source = "свой мозг (канал был занят)"
+            return to_telegram_html(local)
         return TEXT_BUSY
+
     _busy.add(chat_id)
     _last_call[chat_id] = now
-
     try:
-        question = text[:MAX_INPUT_CHARS]
         _remember(chat_id, "user", question)
         messages = [{"role": "system", "content": _system_prompt(user_name)}]
         messages.extend(_history[chat_id])
 
-        reply = (await _ask_api(messages) or "").strip()
-        # Модель могла не ответить или вернуть только ```: наружу вышел бы пустой
-        # <pre></pre>, а такое Telegram показывает пустой карточкой. Считаем это
-        # ответом без ответа: убираем вопрос из истории (чтобы не тянуть его в
-        # следующий запрос) и отдаём управление caller'у - он ответит комплиментом.
-        reply_html = to_telegram_html(reply)
-        if not reply_html or not _visible(reply_html):
-            _history[chat_id].pop()
-            return None
+        # То, что собственный движок знает точно (арифметика, дата, гадание),
+        # считаем сами, не дёргая сеть: быстрее и без расхода лимитов/токенов.
+        hard = _ask_brain(question, user_name, hard_only=True)
+        if hard:
+            _remember(chat_id, "assistant", hard)
+            last_source = "свой мозг"
+            return to_telegram_html(hard)
 
-        _remember(chat_id, "assistant", reply)
-        return reply_html
+        for name, sender in (("DeepSeek", lambda: _ask_deepseek(messages)),
+                             ("Pollinations", lambda: _ask_pollinations(messages))):
+            try:
+                raw_reply = await sender()
+            except Exception:
+                # Отказ одного канала не должен лишать пользователя ответа:
+                # пробуем следующий и в конце концов отвечаем собой.
+                cl.log("LLM", "error", f"{name}: {traceback.format_exc()[-300:]}")
+                continue
+            reply = (raw_reply or "").strip()
+            html_reply = to_telegram_html(reply) if reply else ""
+            # Модель могла не ответить или вернуть только ```: наружу вышел бы
+            # пустой <pre></pre>. Считаем это ответом без ответа.
+            if html_reply and _visible(html_reply):
+                _remember(chat_id, "assistant", reply)
+                last_source = name
+                return html_reply
+
+        local = _ask_brain(question, user_name)
+        if local:
+            _remember(chat_id, "assistant", local)
+            last_source = "свой мозг"
+            return to_telegram_html(local)
+
+        _forget_last_question(chat_id)
+        last_source = "ни один канал"
+        return None
     finally:
         _busy.discard(chat_id)

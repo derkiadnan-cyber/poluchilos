@@ -95,12 +95,26 @@ def get_targets() -> list:
     return ids
 
 
-async def _send_one(chat_id, *, text=None, animation=None, photo=None) -> bool:
+# Результаты одной отправки. Разные причины отказа надо различать:
+# юзер заблокировал бота - это нормально и НЕ повод отменять рассылку,
+# а вот битая ссылка на медиа - повод остановиться и не позориться перед всеми.
+OK = "ok"
+BLOCKED = "blocked"          # юзер заблокировал бота / удалил аккаунт
+MEDIA_ERROR = "media_error"  # Telegram не смог скачать гифку или фото
+FAILED = "failed"            # всё остальное
+
+# Счётчики для /status: сколько людей отписалось, сколько раз медиа не пришло
+stats = {"sent": 0, "blocked": 0, "media_error": 0, "failed": 0}
+# Кэш «уже отправлено сегодня», чтобы не дёргать SQLite каждые 20 секунд
+_daily_cache = {}
+
+
+async def _send_one(chat_id, *, text=None, animation=None, photo=None) -> str:
     """
-    Отправляет одно сообщение. Возвращает True при успехе.
-    TelegramRetryAfter обрабатываем паузой, остальные ошибки - тихо пропускаем
-    (пользователь мог заблокировать бота).
+    Отправляет одно сообщение и возвращает причину успеха/отказа (OK/BLOCKED/...).
+    TelegramRetryAfter обрабатываем паузой, остальные ошибки - тихо пропускаем.
     """
+    media = bool(animation or photo)
     for attempt in (1, 2):
         try:
             if animation:
@@ -109,23 +123,36 @@ async def _send_one(chat_id, *, text=None, animation=None, photo=None) -> bool:
                 await bot.send_photo(chat_id, photo, caption=text)
             else:
                 await bot.send_message(chat_id, text)
-            return True
+            stats["sent"] += 1
+            return OK
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after + 1)
-        except (TelegramForbiddenError, TelegramBadRequest):
-            return False
+        except TelegramForbiddenError:
+            stats["blocked"] += 1
+            return BLOCKED
+        except TelegramBadRequest as e:
+            # Telegram отвечает «failed to get HTTP URL content», когда ссылка
+            # на медиа не работает. Такое повторять бессмысленно.
+            if media and "url" in str(e).lower():
+                stats["media_error"] += 1
+                return MEDIA_ERROR
+            stats["failed"] += 1
+            return FAILED
         except Exception:
             cl.log("Reminds", "error", traceback.format_exc())
-            return False
-    return False
+            stats["failed"] += 1
+            return FAILED
+    stats["failed"] += 1
+    return FAILED
 
 
 async def _broadcast(label: str, *, text=None, animation=None, photo=None,
                      probe_first: bool = False) -> tuple:
     """
-    Разносит сообщение всем юзерам с паузами. Возвращает (отправлено, ошибок).
-    probe_first=True - если ПЕРВЫЙ получатель не принял сообщение, прекращаем:
-    так битая ссылка на медиа не порождает ошибку на каждом юзере.
+    Разносит сообщение всем юзерам с паузами. Возвращает (отправлено, пропущено).
+    probe_first=True - прекращаем рассылку, только если ПЕРВОМУ получателю не
+    зашло именно медиа (битая ссылка). Если же первый просто заблокировал бота,
+    это не повод лишать сообщений остальных.
     """
     targets = get_targets()
     if not targets:
@@ -135,12 +162,14 @@ async def _broadcast(label: str, *, text=None, animation=None, photo=None,
     sent = 0
     failed = 0
     for chat_id in targets:
-        if await _send_one(chat_id, text=text, animation=animation, photo=photo):
+        result = await _send_one(chat_id, text=text, animation=animation, photo=photo)
+        if result == OK:
             sent += 1
         else:
             failed += 1
-            if probe_first and sent == 0:
-                cl.log("Reminds", "info", f"{label}: первый получатель не принял, отменяю рассылку")
+            if probe_first and sent == 0 and result == MEDIA_ERROR:
+                cl.log("Reminds", "info",
+                       f"{label}: Telegram не забрал медиа, отменяю рассылку")
                 return 0, failed
         await asyncio.sleep(SEND_PAUSE)
 
@@ -265,13 +294,19 @@ async def send_gifs() -> None:
 
 async def _run_once_per_day(name: str, label: str, text: str) -> None:
     """
-    Защита от дублей после рестарта: дату отправки храним в БД
-    и помечаем ДО рассылки, чтобы падение посреди отправки не вызвало повтор.
+    «Доброе утро» и «спокойной ночи» должны приходить ровно раз в сутки.
+    Дату держим в памяти процесса, а в БД заглядываем только один раз за день -
+    иначе цикл каждые 20 секунд ходил бы в SQLite без всякого смысла.
+    Запись в БД ставим ДО рассылки, чтобы падение посреди отправки не вызвало повтор.
     """
     today = now_local().strftime("%Y-%m-%d")
+    if _daily_cache.get(name) == today:
+        return
     if BotState.get_value(name) == today:
+        _daily_cache[name] = today
         return
     BotState.set_value(name, today)
+    _daily_cache[name] = today
     await _broadcast(label, text=text)
 
 
@@ -290,32 +325,30 @@ async def send_test(chat_id) -> list:
     """
     results = []
 
-    ok = await _send_one(chat_id, text=content.next_poem())
-    results.append(f"стихи: {'ок' if ok else 'ошибка'}")
+    async def one(label, **kwargs):
+        result = await _send_one(chat_id, **kwargs)
+        why = {OK: "ок", BLOCKED: "чат не принял", MEDIA_ERROR: "медиа не загрузилось",
+               FAILED: "ошибка"}[result]
+        results.append(f"{label}: {why}")
 
-    ok = await _send_one(chat_id, text=content.next_confession())
-    results.append(f"признания: {'ок' if ok else 'ошибка'}")
+    await one("стихи", text=content.next_poem())
+    await one("признания", text=content.next_confession())
 
     gif_url = await get_gif_url()
     if gif_url:
-        ok = await _send_one(chat_id, animation=gif_url, text=content.next_confession())
         src = "Giphy поиск" if giphy_token else "банк без ключа"
-        results.append(f"гифки ({src}): {'ок' if ok else 'ошибка'}")
+        await one(f"гифки ({src})", animation=gif_url, text=content.next_confession())
     else:
         results.append("гифки: пропуск (нет ни токена, ни гифок в банке)")
 
     photo_url, photo_source = await next_photo_url()
     if photo_url:
-        ok = await _send_one(chat_id, photo=photo_url, text=content.next_poem())
-        results.append(f"фото ({photo_source}): {'ок' if ok else 'ошибка'}")
+        await one(f"фото ({photo_source})", photo=photo_url, text=content.next_poem())
     else:
         results.append("фото: пропуск (все источники недоступны)")
 
-    ok = await _send_one(chat_id, text=content.next_morning())
-    results.append(f"утро: {'ок' if ok else 'ошибка'}")
-
-    ok = await _send_one(chat_id, text=content.next_night())
-    results.append(f"ночь: {'ок' if ok else 'ошибка'}")
+    await one("утро", text=content.next_morning())
+    await one("ночь", text=content.next_night())
 
     return results
 

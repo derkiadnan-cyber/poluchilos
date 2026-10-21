@@ -1,15 +1,18 @@
 import datetime
+from zoneinfo import ZoneInfo
 
-from aiogram.utils.deep_linking import create_start_link, decode_payload
+from aiogram.utils.deep_linking import create_start_link
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram import types, F
 
 from handlers.markups import *
 from utils.scripts import safe_edit, safe_answer
-from storage.config import dp, bot, admins
+from storage.config import dp, bot, admins, TIMEZONE
 from storage.states import tryFinish, State, ContactWithDevs
 from db import User
+
+TZ = ZoneInfo(TIMEZONE)
 
 
 @dp.callback_query(F.data == "profile")
@@ -32,11 +35,15 @@ async def contactWithDevsCall(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(ContactWithDevs.Message)
 async def contactWithDevsGoCall(message: types.Message, state: FSMContext):
+    now = datetime.datetime.now(TZ).strftime("%d/%m/%Y, %H:%M:%S")
+    user = message.from_user
+    who = f"{user.id} (@{user.username} | {user.full_name})" if user else "неизвестный"
     for adminTgId in admins:
         try:
-            await bot.send_message(adminTgId, f"Новое сообщение от юзера {message.from_user.id} (@{message.from_user.username} | {message.from_user.full_name}) в {datetime.datetime.now().strftime("%d/%m/%Y, %H:%M:%S")}")
+            await bot.send_message(adminTgId, f"Новое сообщение от юзера {who} в {now}")
             await bot.copy_message(adminTgId, message.from_user.id, message.message_id)
-        except:
+        except Exception:
+            # Админ мог заблокировать бота - остальным всё равно должно дойти
             pass
     await message.answer(f'Ваше сообщение отправлено', reply_markup=to_menu_mpk())
     await tryFinish(state)

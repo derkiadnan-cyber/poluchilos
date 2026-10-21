@@ -1,0 +1,38 @@
+name: checks
+
+# Проверки гоняются при каждом пуше и в pull request - до того, как код
+# уедет в прод на Railway. Ничего не деплоят, только проверяют.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  selfcheck:
+    runs-on: ubuntu-latest
+    env:
+      # Фиктивный токен: бот никуда не ходит, но конфиг требует переменную.
+      BOT_TOKEN: "123456:TEST-token-dlya-proverki"
+      ADMIN_IDS: "1191836733"
+      AUTOSEND: "off"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python (та же версия, что в проде)
+        uses: actions/setup-python@v5
+        with:
+          # Должно совпадать с runtime.txt и Dockerfile, иначе тесты
+          # проверяют не тот Python, на котором бот живёт
+          python-version: "3.12"
+
+      - name: Зависимости
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Синтаксис всех модулей
+        run: python -m compileall -q .
+
+      - name: Самопроверка бота
+        run: python selfcheck.py

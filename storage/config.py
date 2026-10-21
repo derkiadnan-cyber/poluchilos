@@ -119,15 +119,20 @@ QUIET_FROM = _hhmm("QUIET_FROM", "22:30")
 QUIET_TO = _hhmm("QUIET_TO", "07:30")
 
 
-# ===== ОТВЕТЫ НА СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЯ (DeepSeek) =====
-# Бот отвечает на любое обычное сообщение через DeepSeek API и умеет решать
-# любые вопросы. Ключ: DEEPSEEK_API_KEY (https://platform.deepseek.com/api_keys).
-# Без ключа бот не падает и не молчит - отвечает комплиментом из content.COMPLIMENTS.
-AI_ENABLED = _flag("AI_ENABLED", "on" if deepseek_key else "off")
+# ===== ОТВЕТЫ НА СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЯ =====
+# Бот отвечает на любое обычное сообщение. Каскад каналов (см. managers/ai.py):
+#   1. DeepSeek, если задан DEEPSEEK_API_KEY
+#   2. Pollinations - бесплатно и без всяких ключей
+#   3. Свой движок managers/brain.py - работает даже без интернета
+# То есть бот отвечает всегда, а ключ DeepSeek только делает ответы быстрее.
+AI_ENABLED = _flag("AI_ENABLED", "on")
 
 # deepseek-flash - актуальная модель API (V4.1 Flash). Старые имена
 # deepseek-chat / deepseek-reasoner DeepSeek отключил 24.07.2026.
 deepseek_model = get_value_from_env_or("DEEPSEEK_MODEL", "deepseek-flash")
+
+# Модель бесплатного Pollinations. Список доступных: text.pollinations.ai/models
+pollinations_model = get_value_from_env_or("POLLINATIONS_MODEL", "openai")
 
 # Сколько токенов разрешаем отдать модели: сообщения в Telegram короткие,
 # переплачивать за простыни незачем
