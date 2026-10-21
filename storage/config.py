@@ -27,6 +27,7 @@ def get_value_from_env_or(variable, default: str = "") -> str:
 bot_token = get_value_from_env("BOT_TOKEN")
 giphy_token = get_value_from_env_or("GIPHY_TOKEN")
 unsplash_key = get_value_from_env_or("UNSPLASH_ACCESS_KEY")
+deepseek_key = get_value_from_env_or("DEEPSEEK_API_KEY")
 bot = Bot(bot_token, default=DefaultBotProperties(parse_mode='html'))
 dp = Dispatcher()
 router = Router()
@@ -61,6 +62,15 @@ def _minutes(variable, default: int) -> int:
     raw = get_value_from_env_or(variable, str(default))
     try:
         return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _number(variable, default: int, minimum: int = 1) -> int:
+    """Читает целое число из окружения, не падая на мусоре."""
+    raw = get_value_from_env_or(variable, str(default))
+    try:
+        return max(minimum, int(raw))
     except ValueError:
         return default
 
@@ -107,3 +117,21 @@ NIGHT_TIME = _hhmm("NIGHT_TIME", "22:00")              # спокойной но
 QUIET_HOURS = _flag("QUIET_HOURS", "on")
 QUIET_FROM = _hhmm("QUIET_FROM", "22:30")
 QUIET_TO = _hhmm("QUIET_TO", "07:30")
+
+
+# ===== ОТВЕТЫ НА СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЯ (DeepSeek) =====
+# Бот отвечает на любое обычное сообщение через DeepSeek API и умеет решать
+# любые вопросы. Ключ: DEEPSEEK_API_KEY (https://platform.deepseek.com/api_keys).
+# Без ключа бот не падает и не молчит - отвечает комплиментом из content.COMPLIMENTS.
+AI_ENABLED = _flag("AI_ENABLED", "on" if deepseek_key else "off")
+
+# deepseek-flash - актуальная модель API (V4.1 Flash). Старые имена
+# deepseek-chat / deepseek-reasoner DeepSeek отключил 24.07.2026.
+deepseek_model = get_value_from_env_or("DEEPSEEK_MODEL", "deepseek-flash")
+
+# Сколько токенов разрешаем отдать модели: сообщения в Telegram короткие,
+# переплачивать за простыни незачем
+AI_MAX_TOKENS = _number("AI_MAX_TOKENS", 700, 100)
+
+# Сколько секунд ждём ответ. DeepSeek отвечает быстрее этого, но сеть есть сеть
+AI_TIMEOUT = _number("AI_TIMEOUT", 30, 5)

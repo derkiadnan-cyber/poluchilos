@@ -4,7 +4,7 @@ from aiogram.types import BotCommand
 
 from storage.config import (
     dp, bot, db_path, DB_ON_VOLUME, IS_CLOUD, AUTOSEND,
-    giphy_token, unsplash_key,
+    giphy_token, unsplash_key, deepseek_key, deepseek_model, AI_ENABLED,
 )
 from managers.reminds import remindsManager
 from managers import content
@@ -46,6 +46,18 @@ async def bot_started():
                f"фото: {'Unsplash по теме' if unsplash_key else f'встроенный банк из {len(content.ROMANTIC_PHOTOS)} фото (ключ не нужен)'}")
     else:
         cl.log("Bot", "info", "Рассылки: ВЫКЛ (AUTOSEND=off)")
+
+    # Ответы на сообщения пользователя: без ключа бот не сломается,
+    # но будет отвечать комплиментами вместо умных ответов
+    if AI_ENABLED and deepseek_key:
+        cl.log("Bot", "info", f"Ответы на сообщения: DeepSeek ({deepseek_model})")
+    elif deepseek_key:
+        cl.log("Bot", "info", "Ответы на сообщения: ВЫКЛ (AI_ENABLED=off), ключ есть")
+    else:
+        cl.log("Bot", "warning",
+               "Ответы на сообщения: комплименты. Чтобы бот отвечал умно через DeepSeek, "
+               "добавь переменную DEEPSEEK_API_KEY (Railway -> Variables, "
+               "ключ на platform.deepseek.com/api_keys)")
 
     # Меню команд в Telegram должно совпадать с тем, что реально умеет бот
     await bot.set_my_commands([
