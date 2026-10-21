@@ -45,7 +45,9 @@ def check_imports():
     import managers.ai
     import managers.brain
     import managers.content
+    import managers.memes
     import managers.reminds
+    import managers.weather
     import utils.alerts
     import utils.scripts
     return None
@@ -80,6 +82,7 @@ def check_content():
         "NIGHT": c.NIGHT, "NEXT_DAY_WISHES": c.NEXT_DAY_WISHES, "MORNING": c.MORNING,
         "HUG_GIFS": c.HUG_GIFS, "ROMANTIC_PHOTOS": c.ROMANTIC_PHOTOS,
         "PHOTO_TAGS": c.PHOTO_TAGS, "COMPLIMENTS": c.COMPLIMENTS,
+        "MEME_CAPTIONS": c.MEME_CAPTIONS,
         "GIPHY_GIF_QUERIES": c.GIPHY_GIF_QUERIES,
     }
     for name, items in arrays.items():
@@ -132,11 +135,16 @@ def check_deck():
 
 def check_brain():
     from managers import brain
+    from managers import content as c
     problems = []
     cases = {
         "2+2": "4", "сколько будет 17*23": "391", "(5+3)*2**3": "64",
         "5% от 200": "10", "корень из 144": "12", "100/7": "14.285",
         "2^10": "1 024",
+        # Единицы и даты тоже считаем сами, без сети и без внешней модели
+        "сколько минут в 3 часах": "180",
+        "2 кг это сколько грамм": "2 000",
+        "сколько секунд в сутках": "86 400",
     }
     for question, expected in cases.items():
         reply = brain.answer(question) or ""
@@ -147,11 +155,34 @@ def check_brain():
     if "ноль" not in zero.lower():
         problems.append(f"деление на ноль отвечено странно: «{zero[:40]}»")
 
+    until = brain.answer("сколько дней до 1 января") or ""
+    if "января" not in until or not any(ch.isdigit() for ch in until):
+        problems.append(f"обратный отсчёт до даты сломан: «{until[:50]}»")
+
     # Бытовые вопросы обязаны отвечаться без сети
     for question in ("привет", "что умеешь", "который час", "какое сегодня число",
-                     "подбрось монетку", "спасибо", "скинь стих"):
+                     "подбрось монетку", "спасибо", "скинь стих", "как извиниться",
+                     "что подарить", "как тебя зовут"):
         if not brain.answer(question):
             problems.append(f"свой мозг промолчал на «{question}»")
+
+    # Главная просьба пользователя: отвечать по делу, а не комплиментами.
+    # Проверка злая: любая фраза обязана получить текст, и это не должен быть
+    # комплимент из банка.
+    compliments = set(c.COMPLIMENTS)
+    for phrase in ("ыфывыф фывфыв", "что думаешь про акции", "х", "....",
+                   "а ты знаешь рецепт борща", "мне грустно"):
+        reply = brain.answer(phrase)
+        if not reply:
+            problems.append(f"на «{phrase[:20]}» мозг промолчал - будет тишина")
+        elif reply in compliments:
+            problems.append(f"на «{phrase[:20]}» мозг сдал комплимент вместо ответа")
+
+    # hard_only обязан молчать на болтовню: иначе модель никогда не спросится
+    if brain.answer("расскажи про чёрные дыры", hard_only=True):
+        problems.append("hard_only отвечает на болтовню - внешняя модель станет ненужной")
+    if not brain.answer("7*8", hard_only=True):
+        problems.append("hard_only не посчитал 7*8")
 
     # Мусор и попытки инъекции не должны ронять движок и не должны выполняться
     for junk in ("", "   ", "йцукен", "2+", "-3", "__import__('os').system('calc')",
@@ -160,6 +191,203 @@ def check_brain():
             brain.answer(junk)
         except Exception as exc:
             problems.append(f"свой мозг упал на «{junk[:20]}»: {type(exc).__name__}")
+    return problems
+
+
+def check_no_compliment_fallback():
+    """
+    Комплимент больше не должен подставляться вместо ответа на сообщение.
+    По явной просьбе («скинь комплимент») он остался - это нормально, поэтому
+    смотрим конкретно на функции-заглушки, а не на весь файл.
+    """
+    import inspect
+
+    from managers import brain
+    problems = []
+
+    for func in (brain._unknown, brain.answer):
+        try:
+            source = inspect.getsource(func)
+        except OSError as exc:
+            problems.append(f"не смог прочитать {func.__name__}: {exc}")
+            continue
+        if "next_compliment" in source:
+            problems.append(f"brain.{func.__name__}: комплимент подставлен вместо ответа")
+
+    try:
+        with open("handlers/fallbacks.py", encoding="utf-8") as fh:
+            source = fh.read()
+    except OSError as exc:
+        problems.append(f"не смог прочитать fallbacks.py: {exc}")
+    else:
+        if "next_compliment" in source:
+            problems.append("handlers/fallbacks.py: комплимент всё ещё подставляется вместо ответа")
+
+    from storage.config import MEME_MIN
+    if MEME_MIN < 1:
+        problems.append(f"MEME_MIN={MEME_MIN} - мемы будут спамить")
+    return problems
+
+
+def check_ui_texts():
+    """
+    Тексты экранов (меню, справка, история любви) уходят с parse_mode=HTML:
+    один незакрытый <b> - и Telegram отвергает сообщение, а пользователь
+    видит «меню не открывается». Именно так всё и сломалось однажды.
+    """
+    from handlers import start
+    problems = []
+    screens = {
+        "MENU_TEXT": [getattr(start, "MENU_TEXT", "")],
+        "HELP_TEXT": [start.HELP_TEXT],
+        "SETTINGS_TEXT": [start.SETTINGS_TEXT],
+        "LOVE_STORY": list(getattr(start, "LOVE_STORY", [])),
+    }
+    for name, items in screens.items():
+        for i, item in enumerate(items):
+            # LOVE_STORY лежит кортежами по одной главе
+            text = item[0] if isinstance(item, tuple) else item
+            if not text:
+                if name != "LOVE_STORY":
+                    problems.append(f"{name} пустой")
+                continue
+            for tag in ("b", "i", "u", "s", "code", "pre"):
+                if text.count(f"<{tag}>") != text.count(f"</{tag}>"):
+                    problems.append(f"{name}[{i}]: незакрытый <{tag}>")
+            if len(text) > 3900:
+                problems.append(f"{name}[{i}] длиннее лимита Telegram ({len(text)})")
+    return problems
+
+
+def check_memes():
+    """Разбор ответа мемами-сервиса - офлайновый, на фикстуре, без сети."""
+    from managers import memes
+    from storage.config import MEME_MIN_UPS, MEME_RUSSIAN_ONLY, MEME_SUBREDDITS
+    problems = []
+
+    fixture = [
+        # обычный русский пост - пройдёт
+        {"url": "https://i.redd.it/ok.jpg", "ups": 227, "subreddit": "pikabu",
+         "title": "Ни к чему не призываем, нет"},
+        # гифка - пройдёт и уйдёт как анимация
+        {"url": "https://i.redd.it/gif.gif", "ups": 65, "subreddit": "pikabu",
+         "title": "Везёт же некоторым!"},
+        # мало голосов - несмешно
+        {"url": "https://i.redd.it/poor.png", "ups": 3, "subreddit": "pikabu",
+         "title": "Первый пост, не судите"},
+        # англоязычная подпись - пользователю нужен русский мем
+        {"url": "https://i.redd.it/english.jpg", "ups": 40000, "subreddit": "russian_memes",
+         "title": "Russian pickachu but in English"},
+        # 18+, спойлеры и не-картинки не шлём никому
+        {"url": "https://i.redd.it/nsfw.jpg", "ups": 99999, "nsfw": True,
+         "title": "Это не надо никому"},
+        {"url": "https://i.redd.it/spoiler.jpg", "ups": 99999, "spoiler": True,
+         "title": "Осторожно, спойлер"},
+        # видео и битые ссылки Telegram не переварит
+        {"url": "https://v.redd.it/clip.mp4", "ups": 50000, "title": "Видеоролик про котов"},
+        {"url": "", "ups": 50000, "title": "Ссылки нет"},
+        # рейтинг может прийти строкой или null - падать на этом нельзя
+        {"url": "https://i.redd.it/str.jpg", "ups": "1200", "title": "Картинка с цифрами"},
+        {"url": "https://i.redd.it/norate.jpg", "ups": None, "score": 700,
+         "title": "Картинка без рейтинга"},
+    ]
+    parsed = memes._parse(fixture)
+    urls = {m["url"] for m in parsed}
+    if "https://i.redd.it/ok.jpg" not in urls:
+        problems.append("мем с 227 голосами не прошёл фильтр")
+    if not any(m["animation"] for m in parsed):
+        problems.append("гифка не распознана как анимация - уйдёт битым фото")
+    for bad in ("https://i.redd.it/poor.jpg", "https://i.redd.it/poor.png",
+                "https://i.redd.it/nsfw.jpg", "https://i.redd.it/spoiler.jpg",
+                "https://v.redd.it/clip.mp4"):
+        if bad in urls:
+            problems.append(f"фильтр пропустил нежелательный мем {bad}")
+    if MEME_RUSSIAN_ONLY and "https://i.redd.it/english.jpg" in urls:
+        problems.append("англоязычный мем просочился в подборку - пользователь "
+                        "просил русскоязычные")
+    expected = 4 if MEME_RUSSIAN_ONLY else 5
+    if len(parsed) != expected:
+        problems.append(f"разбор вернул {len(parsed)} мемов вместо {expected}: {sorted(urls)}")
+
+    for m in parsed:
+        if m["ups"] < MEME_MIN_UPS:
+            problems.append(f"мем с {m['ups']} голосов слабее MEME_MIN_UPS={MEME_MIN_UPS}")
+    if not memes.status_line().startswith("мемы"):
+        problems.append("status_line для мемов сломалась")
+
+    # Русские сабреддиты маленькие: с порогом в 500 голосов подборка была бы пуста
+    if MEME_MIN_UPS > 200:
+        problems.append(f"MEME_MIN_UPS={MEME_MIN_UPS} - в русскоязычных сабредитах "
+                        f"топ это ~200 голосов, мемов не будет")
+    if MEME_RUSSIAN_ONLY and not any("pikabu" in s for s in MEME_SUBREDDITS):
+        problems.append("в подборке нет r/pikabu - самого живого русского источника")
+    return problems
+
+
+def check_weather():
+    """
+    Форматирование сводки проверяем офлайново, на фикстуре ответа Open-Meteo:
+    сеть в CI нестабильна, а разбор кривого ответа лучше поймать здесь.
+    """
+    from managers import weather
+    problems = []
+
+    if weather._wmo(95)[0] != "гроза":
+        problems.append("код погоды 95 не расшифровывается как гроза")
+    for unknown in (None, "", "abc", 12345):
+        try:
+            weather._wmo(unknown)
+        except Exception as exc:
+            problems.append(f"неизвестный код погоды {unknown!r} роняет сводку: {type(exc).__name__}")
+
+    if weather._degrees(7.4) != "+7°" or weather._degrees(-2.6) != "-3°" or weather._degrees(0) != "0°":
+        problems.append(f"градусы форматируются странно: {weather._degrees(7.4)}/"
+                        f"{weather._degrees(-2.6)}/{weather._degrees(0)}")
+    if weather._number(2.9883) != "2,9883":
+        problems.append(f"курс форматируется не по-русски: {weather._number(2.9883)}")
+    if weather._hour_of("2026-10-21T13:00") != 13 or weather._hour_of("мусор") != -1:
+        problems.append("_hour_of не разбирает время Open-Meteo")
+
+    hourly = {
+        "time": [f"2026-10-21T{h:02d}:00" for h in range(24)],
+        "temperature_2m": [5 + (h % 8) for h in range(24)],
+        "precipitation_probability": [10] * 12 + [80] * 12,
+        "weather_code": [0] * 12 + [61] * 12,
+    }
+    parts = weather._parts(hourly)
+    if len(parts) != 4:
+        problems.append(f"день разложился на {len(parts)} частей вместо 4")
+    if not any("День" in p for p in parts) or not any("80%" in p for p in parts):
+        problems.append(f"во второй половине дня не видно вероятность осадков: {parts}")
+
+    # Пустой/битый ответ не должен рождать сообщение с вопросительными знаками
+    if weather._parts({}) or weather._parts(None):
+        problems.append("_parts не должна ничего возвращать на пустом прогнозе")
+    advice = weather._advice({"precipitation_probability_max": [90], "precipitation_sum": [10],
+                              "temperature_2m_min": [-5], "wind_speed_10m_max": [40]}, {})
+    if "зонт" not in advice or "тёплые вещи" not in advice:
+        problems.append(f"совет на дождь и мороз звучит странно: {advice}")
+    calm = weather._advice({"precipitation_probability_max": [0], "precipitation_sum": [0],
+                            "temperature_2m_min": [18], "wind_speed_10m_max": [3]}, {})
+    if "спокойный" not in calm:
+        problems.append(f"на тёплый день совет не должен пугать: {calm}")
+    for broken in ({}, {"precipitation_sum": ["abc"], "temperature_2m_min": [None]}):
+        try:
+            weather._advice(broken, {})
+        except Exception as exc:
+            problems.append(f"совет падает на битых данных: {type(exc).__name__}")
+
+    from storage.config import WEATHER_TIME, WEATHER_TZ, WEATHER_LAT, WEATHER_LON
+    from zoneinfo import ZoneInfo
+    try:
+        ZoneInfo(WEATHER_TZ)
+    except Exception:
+        problems.append(f"WEATHER_TZ '{WEATHER_TZ}' не существует")
+    if not (-90 <= WEATHER_LAT <= 90 and -180 <= WEATHER_LON <= 180):
+        problems.append(f"координаты за пределами Земли: {WEATHER_LAT}, {WEATHER_LON}")
+    # Смысл задачи в 08:30: не уронили ли настройку переменной окружения
+    if WEATHER_TIME != (8, 30):
+        problems.append(f"сводка утра назначена на {WEATHER_TIME}, а ждали 08:30")
     return problems
 
 
@@ -275,8 +503,12 @@ def run_checks(quiet=False):
     _check("импорты всех модулей", check_imports)
     _check("конфиг и переменные", check_config)
     _check("контент (тексты, фото, гифки)", check_content)
+    _check("тексты экранов (меню, справка, история)", check_ui_texts)
     _check("колода без повторов", check_deck)
     _check("собственный мини-мозг", check_brain)
+    _check("ответы без комплиментов, интервал мемов", check_no_compliment_fallback)
+    _check("подборка мемов (разбор без сети)", check_memes)
+    _check("утренняя сводка: погода и курс", check_weather)
     _check("подготовка HTML для Telegram", check_html)
     _check("модели базы данных", check_database)
     _check("расписание и тихие часы", check_schedule)

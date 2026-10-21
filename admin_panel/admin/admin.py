@@ -58,9 +58,11 @@ async def _status_text() -> str:
                                 giphy_token, unsplash_key, deepseek_key,
                                 deepseek_model, AI_ENABLED, TIMEZONE,
                                 SEND_GIF_MIN, SEND_POEM_MIN, SEND_CONFESSION_MIN,
-                                SEND_PHOTO_MIN, MORNING_TIME, NIGHT_TIME)
+                                SEND_PHOTO_MIN, MEME_MIN, MEME_ENABLED,
+                                WEATHER_ENABLED, WEATHER_TIME, WEATHER_CITY,
+                                MORNING_TIME, NIGHT_TIME)
     from managers.reminds import is_quiet_now, get_targets, stats
-    from managers import ai
+    from managers import ai, memes
     import utils.alerts as alerts
 
     uptime = int(time.monotonic() - _STARTED_AT)
@@ -78,11 +80,17 @@ async def _status_text() -> str:
         f"  • получателей: {len(get_targets())}",
         f"  • тихие часы сейчас: {'да' if is_quiet_now() else 'нет'}",
         f"  • интервалы: гифки {SEND_GIF_MIN}м, стихи {SEND_POEM_MIN}м, "
-        f"признания {SEND_CONFESSION_MIN}м, фото {SEND_PHOTO_MIN}м",
+        f"признания {SEND_CONFESSION_MIN}м, фото {SEND_PHOTO_MIN}м"
+        + (f", мемы {MEME_MIN}м" if MEME_ENABLED else ", мемы выкл"),
         f"  • утро {MORNING_TIME[0]:02d}:{MORNING_TIME[1]:02d}, "
         f"ночь {NIGHT_TIME[0]:02d}:{NIGHT_TIME[1]:02d}",
         f"  • гифки: {'Giphy поиск' if giphy_token else 'встроенный банк (без ключа)'}",
         f"  • фото: {'Unsplash по теме' if unsplash_key else 'встроенный банк (без ключа)'}",
+        f"  • {memes.status_line()}",
+        f"  • утренняя сводка: "
+        + (f"{WEATHER_TIME[0]:02d}:{WEATHER_TIME[1]:02d} — погода ({WEATHER_CITY}) "
+           f"и курс USD/BYN, источники без ключей"
+           if WEATHER_ENABLED else "выключена (WEATHER_ENABLED=off)"),
         f"  • ответы на сообщения: {ai.channels_status()}",
         f"  • отправлено всего: {stats['sent']}, заблокировали: {stats['blocked']}, "
         f"битое медиа: {stats['media_error']}, прочего неудач: {stats['failed']}",

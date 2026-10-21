@@ -11,6 +11,7 @@ from aiogram.types import BotCommand
 from storage.config import (
     dp, bot, db_path, DB_ON_VOLUME, IS_CLOUD, AUTOSEND,
     giphy_token, unsplash_key, deepseek_key, deepseek_model, AI_ENABLED,
+    MEME_MIN, MEME_ENABLED, WEATHER_ENABLED, WEATHER_TIME, WEATHER_CITY,
 )
 from managers.reminds import remindsManager
 from managers import content
@@ -97,6 +98,15 @@ async def bot_started():
                "Рассылки: вкл | "
                f"гифки: {'Giphy поиск' if giphy_token else 'встроенный банк (ключ не нужен)'} | "
                f"фото: {'Unsplash по теме' if unsplash_key else f'встроенный банк из {len(content.ROMANTIC_PHOTOS)} фото (ключ не нужен)'}")
+        cl.log("Bot", "info",
+               f"мемы: каждые {MEME_MIN} мин, отбор по голосам (Reddit, ключ не нужен)"
+               if MEME_ENABLED else "мемы: выключены (MEME_ENABLED=off)")
+        if WEATHER_ENABLED:
+            cl.log("Bot", "info",
+                   f"утренняя сводка: {WEATHER_TIME[0]:02d}:{WEATHER_TIME[1]:02d} — погода "
+                   f"({WEATHER_CITY}, Open-Meteo) + курс USD/BYN (НБ РБ), оба без ключей")
+        else:
+            cl.log("Bot", "info", "утренняя сводка: выключена (WEATHER_ENABLED=off)")
     else:
         cl.log("Bot", "info", "Рассылки: ВЫКЛ (AUTOSEND=off)")
 
@@ -106,8 +116,9 @@ async def bot_started():
                               f"+ бесплатный резерв и свой движок")
     elif AI_ENABLED:
         cl.log("Bot", "info",
-               "Ответы на сообщения: бесплатный Pollinations + свой движок. "
-               "Для быстрого платного канала добавь DEEPSEEK_API_KEY")
+               "Ответы на сообщения: свой движок (точные ответы и флирт) + "
+               "бесплатный Pollinations. Ключи не нужны; DEEPSEEK_API_KEY "
+               "только ускорил бы ответы на сложные вопросы")
     else:
         cl.log("Bot", "info", "Ответы на сообщения: только свой движок (AI_ENABLED=off)")
 

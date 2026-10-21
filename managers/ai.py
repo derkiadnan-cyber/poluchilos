@@ -8,8 +8,9 @@
     3. Свой мозг     - managers/brain.py: считает, знает дату, отвечает про бота.
                        Работает всегда: без ключей, без сети, без лимитов.
 
-Бот не должен молчать ни при каких условиях: если все каналы не смогли,
-caller (handlers/fallbacks.py) отвечает комплиментом.
+Бот не должен молчать ни при каких условиях: собственный движок отвечает и с
+пустым интернетом, и при исчерпанном лимите бесплатного канала. Комплименты
+как заглушку убрали - вместо них честный ответ по существу с лёгкой нежностью.
 
 Ключи берутся из окружения (локально storage/.env, в облаке Railway Variables).
 В репозитории ключей нет и быть не должно.
@@ -24,10 +25,10 @@ from collections import defaultdict, deque
 
 import aiohttp
 
-from managers import brain
+from managers import brain, weather
 from managers.content import AI_SYSTEM_PROMPT
 from storage.config import (
-    AI_ENABLED, AI_MAX_TOKENS, AI_TIMEOUT,
+    AI_ENABLED, AI_MAX_TOKENS, AI_TIMEOUT, WEATHER_ENABLED,
     deepseek_key, deepseek_model, pollinations_model,
 )
 import utils.custom_logger as cl
@@ -47,6 +48,8 @@ MAX_CHATS_IN_MEMORY = 500  # чтобы память контейнера не �
 NETWORK_ERRORS = (aiohttp.ClientError, asyncio.TimeoutError)
 
 TEXT_BUSY = "Уже думаю над твоим прошлым сообщением 💋 Секунду, я рядом"
+TEXT_UNKNOWN = ("Не нашла ответа ни в себе, ни в сети 🙈 Напиши «что умеешь» — "
+                "расскажу, а так я рядом и никуда не денусь 💋")
 
 last_source = "—"          # какой канал ответил последним - видно в /status у админа
 _poll_ok_at = 0.0          # когда в последний раз успешно ответил Pollinations
@@ -136,14 +139,6 @@ def _remember(chat_id, role: str, text: str) -> None:
     _history[chat_id].append({"role": role, "content": text})
 
 
-def _forget_last_question(chat_id) -> None:
-    """Каналы не ответили - не тянем этот вопрос в следующий запрос."""
-    try:
-        _history[chat_id].pop()
-    except (IndexError, KeyError):
-        pass
-
-
 def _system_prompt(user_name: str | None) -> str:
     if user_name:
         return f"{AI_SYSTEM_PROMPT}\n\nТак пользователя зовут: {user_name}."
@@ -227,13 +222,51 @@ def _ask_brain(question: str, user_name: str | None, hard_only: bool = False) ->
         return None
 
 
+# ===== ПОГОДА В ЧАТЕ =====
+# Погоду бот и так приносит каждое утро, поэтому вопрос «а какая погода?»
+# в чате обязан получать тот же свежий ответ, а не «не знаю» из-за того, что
+# бесплатный канал сейчас на паузе. Отвечаем данными Open-Meteo: они точнее,
+# чем то, что выдумает модель без доступа в интернет.
+# Список намеренно узкий: «дождь», «снег», «ветер» легко встречаются в
+# романтических сообщениях («за окном дождь, а я скучаю»), и отвечать на них
+# сводкой погоды - значит снова отвечать мимо. Реальный запрос погоды почти
+# всегда содержит одно из этих слов.
+_WEATHER_WORDS = ("погод", "температур", "прогноз", "градус", "зонт",
+                  "как там на улице")
+WEATHER_CACHE_SECONDS = 10 * 60
+_weather_cache = {"at": 0.0, "text": None}
+
+
+def _wants_weather(norm_source: str) -> bool:
+    low = norm_source.lower()
+    return any(word in low for word in _WEATHER_WORDS)
+
+
+async def _ask_weather() -> str | None:
+    """Свежая погода по данным Open-Meteo, с коротким кешем, чтобы не долбить API."""
+    if not WEATHER_ENABLED:
+        return None
+    now = time.monotonic()
+    if _weather_cache["text"] and now - _weather_cache["at"] < WEATHER_CACHE_SECONDS:
+        return _weather_cache["text"]
+    try:
+        text = await weather.weather_text()
+    except Exception:
+        cl.log("Weather", "error", traceback.format_exc()[-300:])
+        return None
+    if text:
+        _weather_cache.update(at=now, text=text)
+    return text
+
+
 def channels_status() -> str:
     """Человеческая строка про каналы - для /status в админ-панели."""
     deep = f"DeepSeek вкл ({deepseek_model})" if (AI_ENABLED and deepseek_key) else "DeepSeek: нет ключа"
     cooling = time.monotonic() < _poll_blocked_until or (
         _poll_ok_at and time.monotonic() - _poll_ok_at < POLL_FREE_GAP)
     poll = "на паузе до лимита" if cooling else "готов"
-    return f"{deep} | Pollinations без ключа: {poll} | свой мозг: готов | последний: {last_source}"
+    sky = "погода в чате: готова" if WEATHER_ENABLED else "погода в чате: выкл"
+    return f"{deep} | Pollinations без ключа: {poll} | свой мозг: готов | {sky} | последний: {last_source}"
 
 
 # ===== ГЛАВНАЯ ТОЧКА ВХОДА =====
@@ -249,6 +282,19 @@ async def answer(chat_id, text: str, user_name: str = None) -> str | None:
 
     question = text[:MAX_INPUT_CHARS]
     now = time.monotonic()
+
+    # Погоду спрашиваем раньше всего остального и до антифлуда: ответ лежит в
+    # кеше, сети он почти не касается, а иначе быстрая ветка ниже вернула бы
+    # «не знаю» на вопрос, на который у нас есть точный свежий прогноз.
+    if _wants_weather(question):
+        sky = await _ask_weather()
+        if sky:
+            _remember(chat_id, "user", question)
+            _remember(chat_id, "assistant", "свежий прогноз погоды отправлен")
+            last_source = "Open-Meteo (вопрос про погоду)"
+            # Разметку сводки собираем сами - экранировать её нельзя, иначе
+            # пользователь увидел бы <b> прямо в сообщении
+            return sky
 
     # Пока внешний канал занят нашим же прошлым запросом, отвечаем своими
     # силами: это мгновенно и не создаёт очередь из сетевых обращений.
@@ -292,14 +338,9 @@ async def answer(chat_id, text: str, user_name: str = None) -> str | None:
                 last_source = name
                 return html_reply
 
-        local = _ask_brain(question, user_name)
-        if local:
-            _remember(chat_id, "assistant", local)
-            last_source = "свой мозг"
-            return to_telegram_html(local)
-
-        _forget_last_question(chat_id)
-        last_source = "ни один канал"
-        return None
+        local = _ask_brain(question, user_name) or TEXT_UNKNOWN
+        _remember(chat_id, "assistant", local)
+        last_source = "свой мозг (внешние каналы молчали)"
+        return to_telegram_html(local)
     finally:
         _busy.discard(chat_id)

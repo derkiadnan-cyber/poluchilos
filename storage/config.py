@@ -75,6 +75,15 @@ def _number(variable, default: int, minimum: int = 1) -> int:
         return default
 
 
+def _float(variable, default: float) -> float:
+    """Координаты и прочие дробные настройки: бред в переменной не роняет старт."""
+    raw = get_value_from_env_or(variable, str(default))
+    try:
+        return float(raw.replace(",", "."))
+    except ValueError:
+        return default
+
+
 def _hhmm(variable, default: str) -> tuple:
     """Читает время вида ЧЧ:ММ и возвращает кортеж (часы, минуты)."""
     raw = get_value_from_env_or(variable, default)
@@ -107,6 +116,41 @@ SEND_POEM_MIN = _minutes("SEND_POEM_MIN", 60)          # милые стишки
 SEND_CONFESSION_MIN = _minutes("SEND_CONFESSION_MIN", 120)  # любовные признания
 SEND_PHOTO_MIN = _minutes("SEND_PHOTO_MIN", 180)       # любовные фото
 SEND_GIF_MIN = _minutes("SEND_GIF_MIN", 30)            # гифки с обнимашками
+
+# Мемы: каждые MEME_MIN минут бот приносит самый смешной мем.
+# Источник - Reddit (отбор по апвоутам), ключи не нужны.
+# Выключить: MEME_ENABLED=off (интервал меньше минуты не бывает намеренно).
+MEME_MIN = _minutes("MEME_MIN", 55)
+MEME_ENABLED = _flag("MEME_ENABLED", "on") and MEME_MIN > 0
+# Только русскоязычные: в сабреддитах выше много англоязычных постов,
+# поэтому пост без кириллицы в подписи просто не берём в подборку.
+MEME_RUSSIAN_ONLY = _flag("MEME_RUSSIAN_ONLY", "on")
+# Откуда брать. Специально русскоязычные сабреддиты: r/pikabu самый живой,
+# остальные добирают объём. Свой список - через запятую.
+MEME_SUBREDDITS = [s.strip().lower() for s in
+                   get_value_from_env_or("MEME_SUBREDDITS",
+                                         "Pikabu,shitpost_ru,russian_memes,funnyrus").split(",")
+                   if s.strip()]
+# Порог сильно ниже, чем был для англоязычных сабреддитов: в русских топы
+# набирают ~200 голосов, а не 40 000. С 500 русские мемы отфильтровались бы все.
+MEME_MIN_UPS = _number("MEME_MIN_UPS", 20, 1)
+# Сколько мемов держим в запасе: ходим по пулу, а не дёргаем сеть каждый час
+MEME_POOL_SIZE = _number("MEME_POOL_SIZE", 12, 3)
+
+# ===== УТРЕННЯЯ СВОДКА: ПОГОДА + КУРС ВАЛЮТЫ =====
+# 08:30 по TIMEZONE бот расписывает день в Минске и курс доллара к белорусскому
+# рублю. Оба источника бесплатные и БЕЗ КЛЮЧЕЙ: Open-Meteo и официальный
+# API Нацбанка Республики Беларусь (nbrb.by).
+WEATHER_ENABLED = _flag("WEATHER_ENABLED", "on")
+WEATHER_TIME = _hhmm("WEATHER_TIME", "08:30")
+WEATHER_CITY = get_value_from_env_or("WEATHER_CITY", "Минск")
+# Город меняем именно координатами: Open-Meteo не делает поиск по названию
+WEATHER_LAT = _float("WEATHER_LAT", 53.9006)
+WEATHER_LON = _float("WEATHER_LON", 27.5590)
+# Погода живёт в своей таймзоне: «сегодня» и «восход» должны быть минские
+WEATHER_TZ = get_value_from_env_or("WEATHER_TZ", "Europe/Minsk")
+# 431 - код доллара США в справочнике Нацбанка (EUR - 451, RUB - 417)
+FX_USD_ID = _number("FX_USD_ID", 431, 1)
 
 # Фиксированные времена рассылки (в таймзоне TIMEZONE)
 MORNING_TIME = _hhmm("MORNING_TIME", "08:00")          # доброе утро

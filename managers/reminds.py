@@ -6,10 +6,12 @@
   * каждые SEND_POEM_MIN минут       - короткие милые стишки про Дашу
   * каждые SEND_CONFESSION_MIN минут - любовные признания
   * каждые SEND_PHOTO_MIN минут      - романтические фото
+  * каждые MEME_MIN минут            - самый смешной мем дня (по голосам)
 
 По времени суток (таймзона TIMEZONE):
-  * MORNING_TIME (08:00) - доброе утро и победы в новом дне
-  * NIGHT_TIME   (22:00) - спокойной ночи Даше и Аднану + напутствие на завтра
+  * MORNING_TIME (08:00)  - доброе утро и победы в новом дне
+  * WEATHER_TIME (08:30)  - погода в Минске на весь день + курс доллара к BYN
+  * NIGHT_TIME   (22:00)  - спокойной ночи Даше и Аднану + напутствие на завтра
 
 Интервалы, времена и таймзона настраиваются через переменные окружения
 (см. storage/config.py). Сам контент - в managers/content.py.
@@ -29,7 +31,7 @@ from aiogram.exceptions import (
 )
 
 from db import User, BotState
-from managers import content
+from managers import content, memes, weather
 import utils.custom_logger as cl
 from storage.config import (
     bot,
@@ -41,8 +43,12 @@ from storage.config import (
     SEND_CONFESSION_MIN,
     SEND_PHOTO_MIN,
     SEND_GIF_MIN,
+    MEME_MIN,
+    MEME_ENABLED,
     MORNING_TIME,
     NIGHT_TIME,
+    WEATHER_ENABLED,
+    WEATHER_TIME,
     QUIET_HOURS,
     QUIET_FROM,
     QUIET_TO,
@@ -292,21 +298,69 @@ async def send_gifs() -> None:
     await _broadcast("Гифки (замена)", text=caption)
 
 
-async def _run_once_per_day(name: str, label: str, text: str) -> None:
+async def send_memes() -> None:
     """
-    «Доброе утро» и «спокойной ночи» должны приходить ровно раз в сутки.
+    Самый смешной мем из свежей подборки (managers/memes.py).
+    Вместо мема текст не присылаем: «мем не загрузился» - это не мем.
+    Если подборка пуста (нет сети), просто молчим этот час.
+    """
+    meme = await memes.next_meme()
+    if not meme:
+        cl.log("Reminds", "info", "Мемы: брать нечего (нет сети?), пропускаю час")
+        return
+
+    caption = f"{content.next_meme_caption()} ({meme['ups']} голосов) 😂"
+    label = f"Мемы ({meme['ups']} голосов, {meme['sub']})"
+    if meme["animation"]:
+        sent, _ = await _broadcast(label, animation=meme["url"], text=caption,
+                                   probe_first=True)
+    else:
+        sent, _ = await _broadcast(label, photo=meme["url"], text=caption,
+                                   probe_first=True)
+    if not sent:
+        cl.log("Reminds", "warning",
+               "Мемы: Telegram не забрал картинку, в следующий раз возьму другую")
+
+
+async def send_meme_to(chat_id) -> bool:
+    """
+    Мем по просьбе в одном чате (написала «мем» - принесла сразу).
+    Возвращает True, только если картинка реально ушла: иначе caller сам
+    ответит текстом и не будет выглядеть молчуном.
+    """
+    meme = await memes.next_meme()
+    if not meme:
+        return False
+    caption = f"{content.next_meme_caption()} ({meme['ups']} голосов) 😂"
+    if meme["animation"]:
+        result = await _send_one(chat_id, animation=meme["url"], text=caption)
+    else:
+        result = await _send_one(chat_id, photo=meme["url"], text=caption)
+    return result == OK
+
+
+def _should_run_today(name: str) -> bool:
+    """
+    «Ровно один раз в сутки» для утренних рассылок.
     Дату держим в памяти процесса, а в БД заглядываем только один раз за день -
     иначе цикл каждые 20 секунд ходил бы в SQLite без всякого смысла.
-    Запись в БД ставим ДО рассылки, чтобы падение посреди отправки не вызвало повтор.
+    Отметку ставим ДО рассылки, чтобы падение посреди отправки не вызвало повтор.
     """
     today = now_local().strftime("%Y-%m-%d")
     if _daily_cache.get(name) == today:
-        return
+        return False
     if BotState.get_value(name) == today:
         _daily_cache[name] = today
-        return
+        return False
     BotState.set_value(name, today)
     _daily_cache[name] = today
+    return True
+
+
+async def _run_once_per_day(name: str, label: str, text: str) -> None:
+    """«Доброе утро» и «спокойной ночи» должны приходить ровно раз в сутки."""
+    if not _should_run_today(name):
+        return
     await _broadcast(label, text=text)
 
 
@@ -316,6 +370,31 @@ async def send_morning() -> None:
 
 async def send_night() -> None:
     await _run_once_per_day("last_night", "Спокойной ночи", content.next_night())
+
+
+async def send_weather(chat_id=None) -> bool:
+    """
+    Утренняя сводка: погода в Минске на весь день + курс доллара (managers/weather.py).
+    Приходит раз в сутки в WEATHER_TIME. Если источники молчат - молчим и мы:
+    выдуманная погода хуже, чем её отсутствие, а «доброе утро» придёт как обычно.
+    chat_id указан - отправляем только ему (тест из админ-панели).
+    """
+    if chat_id is not None:
+        text = await weather.morning_digest()
+        if not text:
+            return False
+        return await _send_one(chat_id, text=text) == OK
+
+    if not _should_run_today("last_weather"):
+        return False
+    text = await weather.morning_digest()
+    if not text:
+        # Отметку на сегодня уже поставили, но лучше одно молчание в день,
+        # чем десять попыток подряд по кругу каждые 20 секунд
+        cl.log("Reminds", "warning", "Погода: источники молчат, сегодня не приходилось")
+        return False
+    await _broadcast("Погода и курс", text=text)
+    return True
 
 
 async def send_test(chat_id) -> list:
@@ -350,6 +429,25 @@ async def send_test(chat_id) -> list:
     await one("утро", text=content.next_morning())
     await one("ночь", text=content.next_night())
 
+    # Сводка утра идёт одной картиной: погода + доллар. Считаем её честно,
+    # не дожидаясь 08:30, иначе проверить «а погода-то работает?» нельзя.
+    digest = await weather.morning_digest()
+    if digest:
+        await one("погода + курс (08:30)", text=digest)
+    else:
+        results.append("погода + курс: пропуск (Open-Meteo и NBRB не ответили)")
+
+    meme = await memes.next_meme()
+    if meme:
+        caption = f"{content.next_meme_caption()} ({meme['ups']} голосов) 😂"
+        label = f"мем ({meme['ups']} голосов, {meme['sub']})"
+        if meme["animation"]:
+            await one(label, animation=meme["url"], text=caption)
+        else:
+            await one(label, photo=meme["url"], text=caption)
+    else:
+        results.append("мемы: пропуск (подборка пуста - нет сети?)")
+
     return results
 
 
@@ -362,6 +460,8 @@ async def remindsManager():
                f"ночь {NIGHT_TIME[0]:02d}:{NIGHT_TIME[1]:02d} | "
                f"гифки {SEND_GIF_MIN}м | стихи {SEND_POEM_MIN}м | "
                f"признания {SEND_CONFESSION_MIN}м | фото {SEND_PHOTO_MIN}м | "
+               f"{'мемы ' + str(MEME_MIN) + 'м' if MEME_ENABLED else 'мемы выкл'} | "
+               f"{'сводка утра в %02d:%02d' % WEATHER_TIME if WEATHER_ENABLED else 'сводка утра выкл'} | "
                f"тихие часы {'вкл' if QUIET_HOURS else 'выкл'}")
     else:
         cl.log("Reminds Manager", "info", "🔒 Авто-рассылки ОТКЛЮЧЕНЫ (AUTOSEND != on)")
@@ -378,6 +478,11 @@ async def remindsManager():
         "confession": send_confessions,
         "photo": send_photos,
     }
+    # Мемы - отдельная гонка: интервал свой (55 минут по умолчанию), и их
+    # можно выключить целиком переменной MEME_ENABLED=off
+    if MEME_ENABLED:
+        periods["meme"] = MEME_MIN * 60
+        jobs["meme"] = send_memes
     # Старт таймеров с текущего момента: первая рассылка - только через полный интервал
     last_run = {name: now_local() for name in jobs}
 
@@ -391,6 +496,11 @@ async def remindsManager():
                     await send_morning()
                 if _time_reached(now, NIGHT_TIME):
                     await send_night()
+                # Сводка утра: погода + доллар. В тихие часы не сработает,
+                # но и просрочкой не выйдет - тихо закончится в 07:30,
+                # а в 08:30 своё возьмёт
+                if WEATHER_ENABLED and _time_reached(now, WEATHER_TIME) and not is_quiet_now():
+                    await send_weather()
 
                 # Периодические рассылки
                 if not is_quiet_now():

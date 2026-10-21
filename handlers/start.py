@@ -7,7 +7,7 @@ from aiogram import types, F
 from handlers.markups import *
 import utils.custom_logger as cl
 from utils.scripts import get_refer_id, safe_edit, safe_answer
-from storage.config import dp, bot
+from storage.config import dp, bot, MEME_MIN, WEATHER_TIME, WEATHER_CITY
 from storage.states import tryFinish, State
 from db import User
 
@@ -81,7 +81,13 @@ HELP_TEXT = (
     '⚙️ <b>Настройки</b> — управление ботом\n\n'
     '💬 <b>Просто напиши вопрос</b> — отвечу на что угодно: учёба, работа, '
     'код, перевод, рецепт или просто поболтать\n'
-    '   например: <code>25*4</code>, <code>который час</code>, <code>напиши стих</code>\n\n'
+    '   например: <code>25*4</code>, <code>который час</code>, <code>напиши стих</code>\n'
+    '   <i>никакой отсебятины вместо ответа — отвечаю по делу, но нежно 💋</i>\n\n'
+    f'😂 <b>Мемы</b> — каждые {MEME_MIN} минут приношу самое смешное, русское\n'
+    f'🌤 <b>Утро в {WEATHER_TIME[0]:02d}:{WEATHER_TIME[1]:02d}</b> — погода '
+    f'({WEATHER_CITY}) на весь день и курс доллара к белорусскому рублю\n'
+    '💌 <b>Рассылки</b> — фото, гифки, стихи про Дашу, признания, «доброе утро» '
+    'и «спокойной ночи»\n\n'
     '🍌 Команды: <code>/start</code>, <code>/menu</code>, <code>/help</code>, <code>/settings</code>\n\n'
     '💖 <i>Меню показывается по <code>/menu</code> — на обычные сообщения я отвечаю текстом'
     '</i>'
